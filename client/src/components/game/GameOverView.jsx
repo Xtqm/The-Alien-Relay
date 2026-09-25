@@ -5,6 +5,7 @@ import {
   RadioTower, RotateCcw, Shield, Skull, Sparkles, UserRound, WifiOff,
 } from 'lucide-react';
 import PhasePanel from './PhasePanel.jsx';
+import TransferHostButton from './TransferHostButton.jsx';
 
 function FactionBadge({ role }) {
   const alien = role === 'ALIEN';
@@ -216,8 +217,8 @@ export default function GameOverView({ gameState }) {
           <span className="font-mono text-[8px] uppercase tracking-[0.11em] text-slate-600">ORIGINAL AND FINAL FACTIONS DECLASSIFIED</span>
         </div>
         <div className="overflow-x-auto rounded border border-white/[0.07]">
-          <table className="w-full min-w-[640px] border-collapse text-left">
-            <thead><tr className="border-b border-white/[0.07] bg-white/[0.025] font-mono text-[8px] uppercase tracking-[0.12em] text-slate-600"><th className="px-3 py-3 font-medium">Crew member</th><th className="px-3 py-3 font-medium">Original faction</th><th className="px-3 py-3 font-medium">Final faction</th><th className="px-3 py-3 font-medium">Status</th></tr></thead>
+          <table className="w-full min-w-[760px] border-collapse text-left">
+            <thead><tr className="border-b border-white/[0.07] bg-white/[0.025] font-mono text-[8px] uppercase tracking-[0.12em] text-slate-600"><th className="px-3 py-3 font-medium">Crew member</th><th className="px-3 py-3 font-medium">Original faction</th><th className="px-3 py-3 font-medium">Final faction</th><th className="px-3 py-3 font-medium">Status</th><th className="px-3 py-3 font-medium">Command</th></tr></thead>
             <tbody>
               {players.map((player) => {
                 const originalFaction = player.id === alphaAlienId ? 'ALIEN' : 'HUMAN';
@@ -227,6 +228,7 @@ export default function GameOverView({ gameState }) {
                   <td className="px-3 py-3"><FactionBadge role={originalFaction} /></td>
                   <td className="px-3 py-3"><FactionBadge role={player.role} /></td>
                   <td className="px-3 py-3"><span className={`inline-flex items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.1em] ${player.isAlive ? 'text-signal/75' : 'text-slate-500'}`}><CircleDot size={10} />{player.isAlive ? 'SURVIVED' : 'EXILED'}</span></td>
+                  <td className="px-3 py-3">{isHost && current && current.id !== gameState.myPlayerId && !current.isDisconnected && <TransferHostButton player={current} compact />}</td>
                 </tr>;
               })}
             </tbody>

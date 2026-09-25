@@ -338,6 +338,58 @@ async function verifyHostKicks(serverUrl, server) {
   );
 }
 
+async function verifyLobbyHostTransfer(serverUrl, server) {
+  const commander = await createTestClient(serverUrl, 'TransferHost');
+  const candidate = await createTestClient(serverUrl, 'TransferCandidate');
+  const observer = await createTestClient(serverUrl, 'TransferObserver');
+  auxiliaryClients.push(commander, candidate, observer);
+
+  const created = await emitWithAck(commander.socket, 'room:create', { playerName: commander.name });
+  await emitWithAck(candidate.socket, 'room:join', { roomId: created.roomId, playerName: candidate.name });
+  await emitWithAck(observer.socket, 'room:join', { roomId: created.roomId, playerName: observer.name });
+  await waitForAll([commander, candidate, observer], (state) => state.phase === 'LOBBY');
+
+  const candidateId = candidate.session.playerId;
+  const observerId = observer.session.playerId;
+  await assert.rejects(
+    emitWithAck(candidate.socket, 'room:transfer_host', { targetPlayerId: observerId }),
+    /Unauthorized: Only the Outpost Commander can transfer authority\./,
+    'non-host players must not transfer command authority',
+  );
+  await assert.rejects(
+    emitWithAck(commander.socket, 'room:transfer_host', { targetPlayerId: commander.session.playerId }),
+    /Invalid player selected for commander promotion\./,
+    'the host must not transfer authority to themselves',
+  );
+  await assert.rejects(
+    emitWithAck(commander.socket, 'room:transfer_host', { targetPlayerId: 'missing-player-id' }),
+    /Invalid player selected for commander promotion\./,
+    'the host must not transfer authority to a nonexistent player',
+  );
+
+  await emitWithAck(commander.socket, 'room:transfer_host', { targetPlayerId: candidateId });
+  await waitForAll([commander, candidate, observer], (state) => (
+    state.phase === 'LOBBY'
+    && state.players.find((player) => player.id === candidateId)?.isHost === true
+    && state.players.find((player) => player.id === commander.session.playerId)?.isHost === false
+  ));
+  const room = server.rooms.get(created.roomId);
+  assert.equal(room.hostId, candidateId, 'the room host reference must follow the commander transfer');
+  assert.equal(room.players[commander.session.playerId].isHost, false);
+  assert.equal(room.players[candidateId].isHost, true);
+  await waitForCondition(
+    () => commander.announcements.some((entry) => entry.text === `${room.players[candidateId].name} has been appointed Outpost Commander by ${room.players[commander.session.playerId].name}.`),
+    'The commander appointment announcement was not broadcast.',
+  );
+  await assert.rejects(
+    emitWithAck(commander.socket, 'room:transfer_host', { targetPlayerId: observerId }),
+    /Unauthorized: Only the Outpost Commander can transfer authority\./,
+    'a former host must lose transfer authority immediately',
+  );
+
+  for (const client of [commander, candidate, observer]) await emitWithAck(client.socket, 'room:leave');
+}
+
 async function run() {
   const server = createRelayServer({ fastTestMode: true });
   try {
@@ -534,7 +586,8 @@ async function run() {
 
     // Reconnect one player with the issued session token and confirm that the
     // same player record is restored without creating a sixth player.
-    const returningPlayer = clients[1];
+    const returningPlayer = clients.find((client) => !latestStates.get(client.name).canInfectTonight);
+    assert.ok(returningPlayer, 'a non-tip crew member must be available for the reconnect check');
     const returningPlayerId = latestStates.get(returningPlayer.name).myPlayerId;
     const sessionId = returningPlayer.session && returningPlayer.session.sessionId;
     assert.ok(sessionId, 'the server must issue a reconnect session');
@@ -603,12 +656,59 @@ async function run() {
       assert.equal(state.finalReveal.chainActive, true, 'the complete relay chain must remain intact');
     }
 
-    await assert.rejects(
-      emitWithAck(clients[1].socket, 'room:play_again'),
-      /Only the host can initialize a new mission\./,
-      'non-host players must not be able to reset the room',
+    const formerHostId = latestStates.get(clients[0].name).myPlayerId;
+    const appointedHostId = latestStates.get(clients[1].name).myPlayerId;
+    await emitWithAck(clients[0].socket, 'room:transfer_host', { targetPlayerId: appointedHostId });
+    await waitForAll(clients, (state) => (
+      state.phase === 'GAME_OVER'
+      && state.players.find((player) => player.id === appointedHostId)?.isHost === true
+      && state.players.find((player) => player.id === formerHostId)?.isHost === false
+    ));
+    await waitForCondition(
+      () => clients[0].announcements.some((entry) => entry.text === `${clients[1].name} has been appointed Outpost Commander by ${clients[0].name}.`),
+      'The post-game commander appointment announcement was not broadcast.',
     );
-    await emitWithAck(clients[0].socket, 'room:play_again');
+    await assert.rejects(
+      emitWithAck(clients[0].socket, 'room:play_again'),
+      /Only the host can initialize a new mission\./,
+      'the former host must not reset the room after authority is transferred',
+    );
+    await assert.rejects(
+      emitWithAck(clients[0].socket, 'room:transfer_host', { targetPlayerId: latestStates.get(clients[2].name).myPlayerId }),
+      /Unauthorized: Only the Outpost Commander can transfer authority\./,
+      'the former host must not retain transfer authority after the mission',
+    );
+
+    const offlinePlayerId = latestStates.get(clients[2].name).myPlayerId;
+    const offlineSession = { ...clients[2].session };
+    clients[2].socket.disconnect();
+    await waitForState(clients[1], (state) => (
+      state.phase === 'GAME_OVER'
+      && state.players.find((player) => player.id === offlinePlayerId)?.isDisconnected === true
+    ));
+    await assert.rejects(
+      emitWithAck(clients[1].socket, 'room:transfer_host', { targetPlayerId: offlinePlayerId }),
+      /Cannot transfer authority to a disconnected player\./,
+      'authority must not be transferred to a disconnected crew member',
+    );
+    const restoredCrew = await createTestClient(serverUrl, clients[2].name);
+    auxiliaryClients.push(restoredCrew);
+    restoredCrew.session = await emitWithAck(restoredCrew.socket, 'room:reconnect', {
+      roomId,
+      sessionId: offlineSession.sessionId,
+    });
+    clients[2] = restoredCrew;
+    await waitForState(restoredCrew, (state) => (
+      state.phase === 'GAME_OVER'
+      && state.players.find((player) => player.id === offlinePlayerId)?.isDisconnected === false
+    ));
+
+    await assert.rejects(
+      emitWithAck(clients[0].socket, 'room:play_again'),
+      /Only the host can initialize a new mission\./,
+      'only the newly appointed host may initialize the rematch',
+    );
+    await emitWithAck(clients[1].socket, 'room:play_again');
     await waitForAll(clients, (state) => state.phase === 'LOBBY');
     for (const client of clients) {
       const state = latestStates.get(client.name);
@@ -620,7 +720,7 @@ async function run() {
     }
 
     // Exiling the final living alien must immediately award the humans a win.
-    await emitWithAck(clients[0].socket, 'game:start');
+    await emitWithAck(clients[1].socket, 'game:start');
     await waitForAll(clients, (state) => state.phase === 'NIGHT');
     await waitForAll(clients, (state) => state.phase === 'DAY');
     await waitForAll(clients, (state) => state.phase === 'VOTING');
@@ -640,12 +740,12 @@ async function run() {
     for (const client of clients) {
       assert.equal(latestStates.get(client.name).winner, 'HUMANS');
     }
-    await emitWithAck(clients[0].socket, 'room:play_again');
+    await emitWithAck(clients[1].socket, 'room:play_again');
     await waitForAll(clients, (state) => state.phase === 'LOBBY');
 
     // A disconnected spear tip loses transmission authority immediately, while
     // its identity and chain history remain private during the active match.
-    await emitWithAck(clients[0].socket, 'game:start');
+    await emitWithAck(clients[1].socket, 'game:start');
     await waitForAll(clients, (state) => state.phase === 'NIGHT');
     const disconnectedTip = clients.find((client) => latestStates.get(client.name).canInfectTonight);
     assert.ok(disconnectedTip, 'a new match must assign an active relay tip');
@@ -668,9 +768,10 @@ async function run() {
     assert.equal(disconnectVictory.finalReveal.chainActive, false);
 
     await verifyVoluntaryLeaves(serverUrl, server);
+    await verifyLobbyHostTransfer(serverUrl, server);
     await verifyHostKicks(serverUrl, server);
 
-    console.log('Simulation passed: airlock admission, 2v2 parity, assimilation and exile victories, voluntary leave, host migration, lobby and active kicks, kick-session invalidation, relay-tip severance, reconnect grace, rematch authority, and the multiplayer cycle were verified.');
+    console.log('Simulation passed: airlock admission, lobby and post-game commander transfer, transfer security, connected-player validation, 2v2 parity, assimilation and exile victories, voluntary leave, host migration, lobby and active kicks, kick-session invalidation, relay-tip severance, reconnect grace, rematch authority, and the multiplayer cycle were verified.');
   } finally {
     for (const client of clients) client.socket.disconnect();
     for (const client of auxiliaryClients) client.socket.disconnect();

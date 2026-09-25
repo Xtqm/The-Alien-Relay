@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowUpRight, Check, Copy, Cpu, DoorOpen, LoaderCircle, Radio, Settings2, Shield, ShieldCheck, UserRoundCheck, UserRoundX, Users } from 'lucide-react';
 import KickPlayerButton from '../game/KickPlayerButton.jsx';
+import TransferHostButton from '../game/TransferHostButton.jsx';
 import { useGame } from '../../hooks/useGame.js';
 
 const PROTOCOLS = [
@@ -122,7 +123,12 @@ export default function LobbyView({ gameState }) {
               <span className={`shrink-0 rounded border px-1.5 py-1 font-mono text-[8px] uppercase tracking-[0.07em] ${player.isDisconnected ? 'border-amber-200/20 bg-amber-200/[0.045] text-amber-100/75' : 'border-signal/15 bg-signal/[0.035] text-signal/70'}`}>
                 {player.isDisconnected ? 'RELINKING' : 'ONLINE'}
               </span>
-              {isHost && player.id !== gameState.myPlayerId && <KickPlayerButton player={player} />}
+              {isHost && player.id !== gameState.myPlayerId && !player.isDisconnected && (
+                <>
+                  <TransferHostButton player={player} compact />
+                  <KickPlayerButton player={player} />
+                </>
+              )}
             </div>
           ))}
           {players.length < maxPlayers && (

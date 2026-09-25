@@ -330,6 +330,9 @@ export function GameProvider({ children }) {
 
   const startGame = useCallback(() => runAction('game:start'), [runAction]);
   const resetGame = useCallback(() => runAction('room:play_again'), [runAction]);
+  const transferHost = useCallback((targetPlayerId) => (
+    runAction('room:transfer_host', { targetPlayerId })
+  ), [runAction]);
   const toggleWaitingRoom = useCallback((enabled) => (
     runAction('room:toggle_waiting_room', { enabled })
   ), [runAction]);
@@ -381,6 +384,7 @@ export function GameProvider({ children }) {
     leaveRoom,
     startGame,
     resetGame,
+    transferHost,
     toggleWaitingRoom,
     admitApplicant,
     rejectApplicant,
@@ -392,7 +396,7 @@ export function GameProvider({ children }) {
     dismissError,
     dismissRejection,
     dismissKicked,
-  }), [gameState, isPendingAdmission, pendingAdmissionInfo, pendingApplicants, rejectionNotice, kickedReason, connectionStatus, announcements, announcementLog, error, createRoom, joinRoom, leaveRoom, startGame, resetGame, toggleWaitingRoom, admitApplicant, rejectApplicant, kickPlayer, cancelPendingAdmission, updateRoomSettings, infectPlayer, castVote, dismissError, dismissRejection, dismissKicked]);
+  }), [gameState, isPendingAdmission, pendingAdmissionInfo, pendingApplicants, rejectionNotice, kickedReason, connectionStatus, announcements, announcementLog, error, createRoom, joinRoom, leaveRoom, startGame, resetGame, transferHost, toggleWaitingRoom, admitApplicant, rejectApplicant, kickPlayer, cancelPendingAdmission, updateRoomSettings, infectPlayer, castVote, dismissError, dismissRejection, dismissKicked]);
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
 }

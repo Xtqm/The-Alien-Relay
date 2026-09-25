@@ -1026,6 +1026,42 @@ function createRelayServer(options = {}) {
       return { settings: getClientSettings(room) };
     });
 
+    handle(socket, 'room:transfer_host', (payload) => {
+      const { room, player: currentHost } = getAuthenticatedPlayer(socket);
+      if (currentHost.isHost !== true || currentHost.id !== room.hostId) {
+        throw new Error('Unauthorized: Only the Outpost Commander can transfer authority.');
+      }
+      if (room.phase !== 'LOBBY' && room.phase !== 'GAME_OVER') {
+        throw new Error('Commander authority can only be transferred in the lobby or after the mission.');
+      }
+      if (!isPlainObject(payload) || typeof payload.targetPlayerId !== 'string') {
+        throw new Error('Invalid player selected for commander promotion.');
+      }
+
+      const newHost = room.players[payload.targetPlayerId];
+      if (!newHost || newHost.id === currentHost.id) {
+        throw new Error('Invalid player selected for commander promotion.');
+      }
+      const targetSocket = newHost.socketId ? io.sockets.sockets.get(newHost.socketId) : null;
+      if (
+        newHost.isDisconnected
+        || !targetSocket?.connected
+        || targetSocket.data.roomId !== room.id
+        || targetSocket.data.playerId !== newHost.id
+      ) {
+        throw new Error('Cannot transfer authority to a disconnected player.');
+      }
+
+      currentHost.isHost = false;
+      newHost.isHost = true;
+      room.hostId = newHost.id;
+
+      announce(room, `${newHost.name} has been appointed Outpost Commander by ${currentHost.name}.`, 'info');
+      syncRoom(room);
+      syncPendingApplicants(room);
+      return { hostPlayerId: newHost.id };
+    });
+
     handle(socket, 'game:start', () => {
       const { room, player } = getAuthenticatedPlayer(socket);
       if (room.phase !== 'LOBBY') throw new Error('The game has already started.');
