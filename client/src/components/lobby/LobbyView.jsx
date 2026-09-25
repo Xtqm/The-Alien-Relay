@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowUpRight, Check, Copy, Cpu, LoaderCircle, Radio, Settings2, Shield, Users } from 'lucide-react';
+import { ArrowUpRight, Check, Copy, Cpu, DoorOpen, LoaderCircle, Radio, Settings2, Shield, ShieldCheck, UserRoundCheck, UserRoundX, Users } from 'lucide-react';
 import { useGame } from '../../hooks/useGame.js';
 
 const PROTOCOLS = [
@@ -18,14 +18,16 @@ function ReadonlySetting({ label, value }) {
 }
 
 export default function LobbyView({ gameState }) {
-  const { startGame, updateRoomSettings } = useGame();
+  const { startGame, updateRoomSettings, toggleWaitingRoom, pendingApplicants, admitApplicant, rejectApplicant } = useGame();
   const [starting, setStarting] = useState(false);
   const [savingSetting, setSavingSetting] = useState('');
   const [copied, setCopied] = useState(false);
+  const [applicantAction, setApplicantAction] = useState('');
   const players = gameState.players || [];
   const minPlayers = gameState.settings?.minPlayers || 5;
   const maxPlayers = gameState.settings?.maxPlayers || 12;
   const isHost = players.find((player) => player.id === gameState.myPlayerId)?.isHost;
+  const waitingRoomEnabled = Boolean(gameState.settings?.waitingRoomEnabled);
   const shortfall = Math.max(0, minPlayers - players.filter((player) => !player.isDisconnected).length);
 
   const copyCode = async () => {
@@ -57,6 +59,29 @@ export default function LobbyView({ gameState }) {
       // GameContext surfaces any server rejection in the shared error banner.
     } finally {
       setStarting(false);
+    }
+  };
+
+  const setAirlockProtocol = async () => {
+    setSavingSetting('waitingRoom');
+    try {
+      await toggleWaitingRoom(!waitingRoomEnabled);
+    } catch {
+      // GameContext surfaces any server rejection in the shared error banner.
+    } finally {
+      setSavingSetting('');
+    }
+  };
+
+  const decideApplicant = async (applicantId, decision) => {
+    setApplicantAction(applicantId);
+    try {
+      if (decision === 'admit') await admitApplicant(applicantId);
+      else await rejectApplicant(applicantId);
+    } catch {
+      // GameContext surfaces any server rejection in the shared error banner.
+    } finally {
+      setApplicantAction('');
     }
   };
 
@@ -130,6 +155,18 @@ export default function LobbyView({ gameState }) {
                   </select>
                 </label>
               ))}
+              <div className="border-t border-white/[0.06] pt-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-mono text-[9px] uppercase tracking-[0.1em] text-slate-300">Airlock Security</div>
+                    <p className="mt-1 font-mono text-[8px] uppercase tracking-[0.06em] text-slate-600">Waiting room // host approval required</p>
+                  </div>
+                  <button type="button" role="switch" aria-checked={waitingRoomEnabled} aria-label="Airlock Security waiting room" onClick={setAirlockProtocol} disabled={Boolean(savingSetting) || starting} className={`relative h-7 w-12 shrink-0 rounded-full border transition disabled:cursor-wait disabled:opacity-60 ${waitingRoomEnabled ? 'border-cyan-100/30 bg-cyan-100/15' : 'border-white/10 bg-white/[0.035]'}`}>
+                    <span className={`absolute top-[3px] h-[18px] w-[18px] rounded-full transition-all ${waitingRoomEnabled ? 'left-[25px] bg-cyan-100 shadow-[0_0_12px_rgba(165,243,252,0.3)]' : 'left-[3px] bg-slate-500'}`} />
+                  </button>
+                </div>
+                <div className={`mt-2 flex items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.09em] ${waitingRoomEnabled ? 'text-cyan-100/70' : 'text-slate-600'}`}><ShieldCheck size={10} />{waitingRoomEnabled ? 'Clearance required for new arrivals' : 'Open entry // valid room code grants access'}</div>
+              </div>
               <p className="pt-1 font-mono text-[8px] leading-relaxed tracking-[0.08em] text-slate-600">PROTOCOL CHANGES SYNC TO THE CREW AND APPLY BEFORE LAUNCH.</p>
             </div>
           ) : (
@@ -137,10 +174,37 @@ export default function LobbyView({ gameState }) {
               <ReadonlySetting label="Day discussion" value={gameState.settings?.dayDurationSeconds || 90} />
               <ReadonlySetting label="Night cycle" value={gameState.settings?.nightDurationSeconds || 20} />
               <ReadonlySetting label="Tribunal" value={gameState.settings?.votingDurationSeconds || 30} />
+              <div className="flex items-center justify-between gap-3 border-b border-white/[0.055] py-3 last:border-0 last:pb-0"><span className="font-mono text-[10px] uppercase tracking-[0.1em] text-slate-500">Airlock Security</span><span className={`font-mono text-[9px] uppercase tracking-[0.1em] ${waitingRoomEnabled ? 'text-cyan-100/75' : 'text-slate-400'}`}>{waitingRoomEnabled ? 'Waiting room' : 'Open entry'}</span></div>
               <div className="mt-4 flex items-center gap-2 border-t border-white/[0.055] pt-3 font-mono text-[8px] uppercase tracking-[0.1em] text-slate-600"><Shield size={11} className="text-amber-200/60" /> COMMAND CONFIGURED</div>
             </>
           )}
         </section>
+
+        {isHost && pendingApplicants.length > 0 && (
+          <section className="rounded-lg border border-cyan-100/20 bg-[radial-gradient(ellipse_at_10%_0%,rgba(34,211,238,0.065),transparent_60%),#0a1016] p-5 sm:p-6" aria-labelledby="clearance-requests-title">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <div className="mb-1 flex items-center gap-2 font-mono text-[8px] uppercase tracking-[0.15em] text-cyan-100/65"><DoorOpen size={12} /> Pending clearance</div>
+                <h2 id="clearance-requests-title" className="font-display text-lg text-slate-100">Clearance requests</h2>
+              </div>
+              <span className="flex h-7 min-w-7 items-center justify-center rounded border border-cyan-100/15 bg-cyan-100/[0.04] px-2 font-mono text-[9px] text-cyan-100/80">{pendingApplicants.length}</span>
+            </div>
+            <div className="space-y-2">
+              {pendingApplicants.map((applicant) => (
+                <div key={applicant.id} className="rounded border border-white/[0.07] bg-black/20 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2 text-sm text-slate-200"><Users size={13} className="shrink-0 text-cyan-100/65" /><span className="truncate">{applicant.name}</span></div>
+                    <span className="shrink-0 font-mono text-[7px] uppercase tracking-[0.06em] text-slate-600">{new Date(applicant.requestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => decideApplicant(applicant.id, 'admit')} disabled={Boolean(applicantAction)} className="flex h-9 items-center justify-center gap-1.5 rounded border border-signal/20 bg-signal/[0.045] font-mono text-[8px] font-semibold uppercase tracking-[0.1em] text-signal/80 transition hover:bg-signal/[0.09] disabled:cursor-wait disabled:opacity-45"><UserRoundCheck size={12} /> Admit</button>
+                    <button type="button" onClick={() => decideApplicant(applicant.id, 'deny')} disabled={Boolean(applicantAction)} className="flex h-9 items-center justify-center gap-1.5 rounded border border-rose-200/15 bg-rose-200/[0.025] font-mono text-[8px] font-semibold uppercase tracking-[0.1em] text-rose-100/70 transition hover:bg-rose-200/[0.07] disabled:cursor-wait disabled:opacity-45"><UserRoundX size={12} /> Deny</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="rounded-lg border border-signal/15 bg-signal/[0.025] p-5 sm:p-6">
           <div className="mb-4 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.18em] text-signal/75">

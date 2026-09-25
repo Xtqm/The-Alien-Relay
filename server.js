@@ -16,6 +16,7 @@ const DEFAULT_ROOM_SETTINGS = Object.freeze({
   votingDurationSeconds: 30,
   resolutionDurationSeconds: 6,
   reconnectGraceSeconds: 20,
+  waitingRoomEnabled: false,
 });
 
 const PHASES = Object.freeze([
@@ -77,6 +78,12 @@ function normalizeRoomSettings(settings, base = DEFAULT_ROOM_SETTINGS) {
   integerSetting('nightDurationSeconds', 15, 30);
   integerSetting('dayDurationSeconds', 45, 180);
   integerSetting('votingDurationSeconds', 15, 60);
+  if (input.waitingRoomEnabled !== undefined) {
+    if (typeof input.waitingRoomEnabled !== 'boolean') {
+      throw new Error('waitingRoomEnabled must be a boolean.');
+    }
+    next.waitingRoomEnabled = input.waitingRoomEnabled;
+  }
   return next;
 }
 
@@ -275,6 +282,75 @@ function createRelayServer(options = {}) {
       const state = sanitizeStateForPlayer(room, player.socketId);
       if (state) io.to(player.socketId).emit('game:state_sync', state);
     }
+  }
+
+  function getPendingApplicantList(room) {
+    return Object.values(room.pendingApplicants)
+      .sort((left, right) => left.requestedAt - right.requestedAt)
+      .map(({ id, name, requestedAt }) => ({ id, name, requestedAt }));
+  }
+
+  function syncPendingApplicants(room) {
+    const host = room.players[room.hostId];
+    if (!host?.socketId) return;
+    io.to(host.socketId).emit('room:pending_list_sync', getPendingApplicantList(room));
+  }
+
+  function sendApplicantRejection(applicantId, message = 'Entry denied by outpost commander.') {
+    const applicantSocket = io.sockets.sockets.get(applicantId);
+    if (!applicantSocket) return;
+    applicantSocket.data.pendingRoomId = null;
+    applicantSocket.emit('room:rejected', { message });
+    // Let the rejection packet flush before closing the temporary connection.
+    setTimeout(() => {
+      const connectedSocket = io.sockets.sockets.get(applicantId);
+      if (connectedSocket) connectedSocket.disconnect(true);
+    }, 100);
+  }
+
+  function rejectAllPendingApplicants(room, message) {
+    for (const applicantId of Object.keys(room.pendingApplicants)) {
+      delete room.pendingApplicants[applicantId];
+      sendApplicantRejection(applicantId, message);
+    }
+    syncPendingApplicants(room);
+  }
+
+  function admitApplicant(room, applicantId) {
+    const applicant = room.pendingApplicants[applicantId];
+    if (!applicant) return false;
+
+    delete room.pendingApplicants[applicantId];
+    const applicantSocket = io.sockets.sockets.get(applicantId);
+    if (!applicantSocket?.connected) {
+      syncPendingApplicants(room);
+      return false;
+    }
+    if (Object.keys(room.players).length >= room.settings.maxPlayers) {
+      sendApplicantRejection(applicantId, 'The outpost roster is full. Entry was not authorized.');
+      syncPendingApplicants(room);
+      return false;
+    }
+
+    const player = {
+      id: crypto.randomUUID(),
+      sessionId: applicant.sessionId,
+      socketId: null,
+      name: applicant.name,
+      isHost: false,
+      isAlive: true,
+      isDisconnected: false,
+      role: 'HUMAN',
+      infectedTargetId: null,
+      votedFor: null,
+      joinOrder: room.nextJoinOrder++,
+    };
+    room.players[player.id] = player;
+    applicantSocket.data.pendingRoomId = null;
+    const session = attachSocketToPlayer(applicantSocket, room, player);
+    applicantSocket.emit('room:admit_success', { roomId: room.id, playerId: player.id });
+    syncPendingApplicants(room);
+    return session;
   }
 
   function announce(room, text, type = 'info') {
@@ -494,11 +570,13 @@ function createRelayServer(options = {}) {
       migrateHost(room);
     }
     if (Object.keys(room.players).length === 0) {
+      rejectAllPendingApplicants(room, 'The outpost is no longer available. Entry was not authorized.');
       clearPhaseTimers(room);
       rooms.delete(room.id);
       return;
     }
     syncRoom(room);
+    syncPendingApplicants(room);
   }
 
   function markDisconnected(room, player) {
@@ -586,6 +664,7 @@ function createRelayServer(options = {}) {
     const session = { roomId: room.id, playerId: player.id, sessionId: player.sessionId };
     socket.emit('room:session', session);
     syncRoom(room);
+    syncPendingApplicants(room);
     return session;
   }
 
@@ -614,7 +693,7 @@ function createRelayServer(options = {}) {
   io.on('connection', (socket) => {
     handle(socket, 'room:create', (payload) => {
       if (!isPlainObject(payload)) throw new Error('Room creation details must be an object.');
-      if (socket.data.roomId) throw new Error('This connection is already in a room.');
+      if (socket.data.roomId || socket.data.pendingRoomId) throw new Error('This connection is already in a room or airlock queue.');
       const name = sanitizePlayerName(payload.playerName);
       const roomId = createRoomCode(rooms);
       const room = {
@@ -631,6 +710,7 @@ function createRelayServer(options = {}) {
         latestAlienId: null,
         hostId: null,
         players: Object.create(null),
+        pendingApplicants: Object.create(null),
         lastExiledPlayerId: null,
         lastExiledRole: null,
         lastExiledVoteCount: null,
@@ -665,18 +745,48 @@ function createRelayServer(options = {}) {
 
     handle(socket, 'room:join', (payload) => {
       if (!isPlainObject(payload)) throw new Error('Room join details must be an object.');
-      if (socket.data.roomId) throw new Error('This connection is already in a room.');
+      if (socket.data.roomId || socket.data.pendingRoomId) throw new Error('This connection is already in a room or airlock queue.');
       const roomId = normalizeRoomCode(payload.roomId);
       const room = rooms.get(roomId);
       if (!room) throw new Error('That room does not exist.');
       if (room.phase !== 'LOBBY') throw new Error('This game has already started.');
       if (Object.keys(room.players).length >= room.settings.maxPlayers) throw new Error('That room is full.');
 
+      const name = sanitizePlayerName(payload.playerName);
+      if (room.settings.waitingRoomEnabled) {
+        if (Object.keys(room.players).length + Object.keys(room.pendingApplicants).length >= room.settings.maxPlayers) {
+          throw new Error('That room has no remaining admission slots.');
+        }
+        const applicant = {
+          id: socket.id,
+          name,
+          requestedAt: Date.now(),
+          sessionId: crypto.randomBytes(32).toString('hex'),
+        };
+        room.pendingApplicants[socket.id] = applicant;
+        socket.data.pendingRoomId = room.id;
+        socket.emit('room:join_pending', {
+          roomId: room.id,
+          applicantId: socket.id,
+          tempSessionId: applicant.sessionId,
+          requestedAt: applicant.requestedAt,
+        });
+        syncPendingApplicants(room);
+        const host = room.players[room.hostId];
+        if (host?.socketId) {
+          io.to(host.socketId).emit('game:announcement', {
+            text: `${name} is requesting airlock clearance.`,
+            type: 'info',
+          });
+        }
+        return { pending: true, roomId: room.id };
+      }
+
       const player = {
         id: crypto.randomUUID(),
         sessionId: crypto.randomBytes(32).toString('hex'),
         socketId: null,
-        name: sanitizePlayerName(payload.playerName),
+        name,
         isHost: false,
         isAlive: true,
         isDisconnected: false,
@@ -692,7 +802,7 @@ function createRelayServer(options = {}) {
 
     handle(socket, 'room:reconnect', (payload) => {
       if (!isPlainObject(payload)) throw new Error('Reconnect details must be an object.');
-      if (socket.data.roomId) throw new Error('This connection is already in a room.');
+      if (socket.data.roomId || socket.data.pendingRoomId) throw new Error('This connection is already in a room or airlock queue.');
       const roomId = normalizeRoomCode(payload.roomId);
       const room = rooms.get(roomId);
       if (!room) throw new Error('That room no longer exists.');
@@ -702,6 +812,72 @@ function createRelayServer(options = {}) {
       ));
       if (!player) throw new Error('That reconnect session is invalid or expired.');
       return attachSocketToPlayer(socket, room, player);
+    });
+
+    handle(socket, 'room:toggle_waiting_room', (payload) => {
+      const { room, player } = getAuthenticatedPlayer(socket);
+      if (room.phase !== 'LOBBY') throw new Error('The airlock protocol can only change in the lobby.');
+      if (player.id !== room.hostId) throw new Error('Only the host can change the airlock protocol.');
+      if (!isPlainObject(payload) || typeof payload.enabled !== 'boolean') {
+        throw new Error('Choose whether the airlock waiting room is enabled.');
+      }
+
+      room.settings.waitingRoomEnabled = payload.enabled;
+      if (!payload.enabled) {
+        for (const applicantId of Object.keys(room.pendingApplicants)) {
+          admitApplicant(room, applicantId);
+        }
+      }
+      syncRoom(room);
+      syncPendingApplicants(room);
+      return { waitingRoomEnabled: room.settings.waitingRoomEnabled };
+    });
+
+    handle(socket, 'room:admit_applicant', (payload) => {
+      const { room, player } = getAuthenticatedPlayer(socket);
+      if (room.phase !== 'LOBBY') throw new Error('Applicants can only be admitted while the lobby is open.');
+      if (player.id !== room.hostId) throw new Error('Only the host can admit applicants.');
+      if (!isPlainObject(payload) || typeof payload.applicantId !== 'string') {
+        throw new Error('Choose an applicant to admit.');
+      }
+      const session = admitApplicant(room, payload.applicantId);
+      if (!session) throw new Error('That admission request is no longer available.');
+      return { playerId: session.playerId };
+    });
+
+    handle(socket, 'room:reject_applicant', (payload) => {
+      const { room, player } = getAuthenticatedPlayer(socket);
+      if (room.phase !== 'LOBBY') throw new Error('Applicants can only be denied while the lobby is open.');
+      if (player.id !== room.hostId) throw new Error('Only the host can deny applicants.');
+      if (!isPlainObject(payload) || typeof payload.applicantId !== 'string') {
+        throw new Error('Choose an applicant to deny.');
+      }
+      const applicant = room.pendingApplicants[payload.applicantId];
+      if (!applicant) throw new Error('That admission request is no longer available.');
+      delete room.pendingApplicants[payload.applicantId];
+      sendApplicantRejection(applicant.id, 'Entry denied by outpost commander.');
+      syncPendingApplicants(room);
+      return {};
+    });
+
+    handle(socket, 'room:cancel_pending', () => {
+      const room = rooms.get(socket.data.pendingRoomId);
+      const applicant = room?.pendingApplicants[socket.id];
+      if (!room || !applicant) {
+        socket.data.pendingRoomId = null;
+        return { cancelled: false };
+      }
+      delete room.pendingApplicants[socket.id];
+      socket.data.pendingRoomId = null;
+      syncPendingApplicants(room);
+      const host = room.players[room.hostId];
+      if (host?.socketId) {
+        io.to(host.socketId).emit('game:announcement', {
+          text: `${applicant.name} withdrew their airlock request.`,
+          type: 'info',
+        });
+      }
+      return { cancelled: true };
     });
 
     handle(socket, 'room:update_settings', (payload) => {
@@ -722,6 +898,8 @@ function createRelayServer(options = {}) {
       if (players.length < room.settings.minPlayers) {
         throw new Error(`At least ${room.settings.minPlayers} connected players are required.`);
       }
+
+      rejectAllPendingApplicants(room, 'The mission has begun. New admissions are closed.');
 
       const alpha = players[crypto.randomInt(players.length)];
       room.alphaAlienId = alpha.id;
@@ -834,6 +1012,21 @@ function createRelayServer(options = {}) {
     });
 
     socket.on('disconnect', () => {
+      const pendingRoom = rooms.get(socket.data.pendingRoomId);
+      const pendingApplicant = pendingRoom?.pendingApplicants[socket.id];
+      if (pendingRoom && pendingApplicant) {
+        delete pendingRoom.pendingApplicants[socket.id];
+        socket.data.pendingRoomId = null;
+        syncPendingApplicants(pendingRoom);
+        const host = pendingRoom.players[pendingRoom.hostId];
+        if (host?.socketId) {
+          io.to(host.socketId).emit('game:announcement', {
+            text: `${pendingApplicant.name} withdrew their airlock request.`,
+            type: 'info',
+          });
+        }
+        return;
+      }
       const room = rooms.get(socket.data.roomId);
       const player = room && room.players[socket.data.playerId];
       // A superseded connection must not mark the player's new connection offline.

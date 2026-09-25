@@ -3,11 +3,23 @@ import AnnouncementToast from './components/common/AnnouncementToast.jsx';
 import Header from './components/common/Header.jsx';
 import ActiveGameShell from './components/game/ActiveGameShell.jsx';
 import LobbyView from './components/lobby/LobbyView.jsx';
+import WaitingRoomView from './components/lobby/WaitingRoomView.jsx';
 import LandingView from './components/landing/LandingView.jsx';
 import { useGame } from './hooks/useGame.js';
 
 export default function App() {
-  const { gameState, connectionStatus, announcements, error, dismissError, announcementLog } = useGame();
+  const {
+    gameState,
+    isPendingAdmission,
+    pendingAdmissionInfo,
+    rejectionNotice,
+    dismissRejection,
+    connectionStatus,
+    announcements,
+    error,
+    dismissError,
+    announcementLog,
+  } = useGame();
   const inRoom = Boolean(gameState?.roomId);
 
   return (
@@ -25,10 +37,14 @@ export default function App() {
       )}
 
       {!gameState?.roomId ? (
-        <>
-          {!inRoom && <Header connectionStatus={connectionStatus} />}
-          <LandingView connectionStatus={connectionStatus} />
-        </>
+        isPendingAdmission ? (
+          <WaitingRoomView connectionStatus={connectionStatus} admissionInfo={pendingAdmissionInfo} />
+        ) : (
+          <>
+            {!inRoom && <Header connectionStatus={connectionStatus} />}
+            <LandingView connectionStatus={connectionStatus} />
+          </>
+        )
       ) : gameState.phase === 'LOBBY' ? (
         <>
           <LobbyView gameState={gameState} />
@@ -36,6 +52,17 @@ export default function App() {
         </>
       ) : (
         <ActiveGameShell gameState={gameState} connectionStatus={connectionStatus} announcementLog={announcementLog} />
+      )}
+
+      {rejectionNotice && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="airlock-rejected-title" className="w-full max-w-md rounded-lg border border-rose-200/20 bg-[#0b0e13] p-6 shadow-[0_0_70px_rgba(251,113,133,0.12)]">
+            <div className="font-mono text-[9px] uppercase tracking-[0.17em] text-rose-200/65">AIRLOCK // CLEARANCE DENIED</div>
+            <h1 id="airlock-rejected-title" className="mt-2 font-display text-2xl text-slate-100">Entry was not authorized.</h1>
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">{rejectionNotice}</p>
+            <button type="button" onClick={dismissRejection} className="mt-6 flex h-11 w-full items-center justify-center rounded border border-rose-200/20 bg-rose-200/[0.07] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-rose-100 transition hover:bg-rose-200/[0.12]">Return to access terminal</button>
+          </section>
+        </div>
       )}
     </div>
   );

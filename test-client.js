@@ -1,15 +1,16 @@
 'use strict';
 
 // This script starts an isolated in-memory server with two-second phases, then
-// drives five real Socket.IO clients through a complete match and rematch.
+// drives five real Socket.IO clients through airlock admission and two matches.
 process.env.FAST_TEST_MODE = 'true';
 
 const assert = require('node:assert/strict');
-const { io: createClient } = require('socket.io-client');
+const { io: createSocketClient } = require('socket.io-client');
 const { createRelayServer } = require('./server');
 
 const PLAYER_NAMES = ['Avery', 'Blake', 'Casey', 'Drew', 'Emery'];
 const clients = [];
+const auxiliaryClients = [];
 const latestStates = new Map();
 const loggedPhases = new Map();
 
@@ -54,11 +55,58 @@ async function waitForAll(clientsToWaitFor, predicate) {
   return Promise.all(clientsToWaitFor.map((client) => waitForState(client, predicate)));
 }
 
+async function waitForCondition(predicate, message, timeoutMilliseconds = 2000) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await delay(10);
+  }
+}
+
 function logState(client, state) {
   const phaseKey = `${state.roundNumber}:${state.phase}`;
   if (loggedPhases.get(client.name) === phaseKey) return;
   loggedPhases.set(client.name, phaseKey);
-  console.log(`[${client.name}] ${JSON.stringify(state)}`);
+  console.log(`[${client.name}] ${phaseKey}`);
+}
+
+function wireClient(client) {
+  const { socket } = client;
+  socket.on('room:session', (session) => { client.session = session; });
+  socket.on('room:join_pending', (info) => { client.joinPending = info; });
+  socket.on('room:admit_success', (info) => { client.admitSuccess = info; });
+  socket.on('room:rejected', (info) => { client.rejection = info; });
+  socket.on('room:pending_list_sync', (applicants) => { client.pendingApplicants = applicants; });
+  socket.on('game:state_sync', (state) => {
+    latestStates.set(client.name, state);
+    logState(client, state);
+  });
+}
+
+async function createTestClient(serverUrl, name) {
+  const socket = createSocket(serverUrl);
+  const client = {
+    name,
+    socket,
+    session: null,
+    joinPending: null,
+    admitSuccess: null,
+    rejection: null,
+    pendingApplicants: [],
+  };
+  wireClient(client);
+  await new Promise((resolve, reject) => {
+    socket.once('connect', resolve);
+    socket.once('connect_error', reject);
+  });
+  return client;
+}
+
+function createSocket(serverUrl) {
+  return createSocketClient(serverUrl, {
+    transports: ['websocket'],
+    reconnection: false,
+  });
 }
 
 async function run() {
@@ -67,23 +115,7 @@ async function run() {
     const address = await server.listen(0, '127.0.0.1');
     const serverUrl = `http://127.0.0.1:${address.port}`;
 
-    for (const name of PLAYER_NAMES) {
-      const socket = createClient(serverUrl, {
-        transports: ['websocket'],
-        reconnection: false,
-      });
-      const client = { name, socket, session: null };
-      clients.push(client);
-      socket.on('room:session', (session) => { client.session = session; });
-      socket.on('game:state_sync', (state) => {
-        latestStates.set(name, state);
-        logState(client, state);
-      });
-      await new Promise((resolve, reject) => {
-        socket.once('connect', resolve);
-        socket.once('connect_error', reject);
-      });
-    }
+    for (const name of PLAYER_NAMES) clients.push(await createTestClient(serverUrl, name));
 
     const created = await emitWithAck(clients[0].socket, 'room:create', {
       playerName: clients[0].name,
@@ -91,16 +123,131 @@ async function run() {
     const roomId = created.roomId;
     assert.match(roomId, /^[A-Z0-9]{4}$/);
 
-    for (const client of clients.slice(1)) {
+    // Open entry remains the default: the first arrivals join without a queue.
+    for (const client of clients.slice(1, 3)) {
       await emitWithAck(client.socket, 'room:join', {
         roomId,
         playerName: client.name,
       });
     }
 
+    await waitForAll(clients.slice(0, 3), (state) => state.phase === 'LOBBY');
+    assert.equal(latestStates.get(clients[0].name).settings.waitingRoomEnabled, false);
+    await emitWithAck(clients[0].socket, 'room:toggle_waiting_room', { enabled: true });
+
+    const firstRequest = await emitWithAck(clients[3].socket, 'room:join', {
+      roomId,
+      playerName: clients[3].name,
+    });
+    assert.equal(firstRequest.pending, true, 'new arrivals must queue while airlock security is enabled');
+    await waitForCondition(() => Boolean(clients[3].joinPending), 'Applicant did not receive room:join_pending.');
+    assert.ok(clients[3].joinPending, 'queued applicants must receive a waiting-room event');
+    assert.equal(latestStates.has(clients[3].name), false, 'queued applicants must not receive the lobby roster');
+    await waitForCondition(
+      () => clients[0].pendingApplicants.some((applicant) => applicant.name === clients[3].name),
+      'Host did not receive the pending applicant list.',
+    );
+    assert.equal(clients[0].pendingApplicants.some((applicant) => applicant.name === clients[3].name), true);
+    assert.equal(clients[1].pendingApplicants.length, 0, 'only the host may receive applicant details');
+    await assert.rejects(
+      emitWithAck(clients[1].socket, 'room:toggle_waiting_room', { enabled: false }),
+      /Only the host can change the airlock protocol\./,
+      'non-host players must not change admission policy',
+    );
+    await assert.rejects(
+      emitWithAck(clients[0].socket, 'game:start'),
+      /At least 5 connected players are required\./,
+      'a pending request must not count toward the launch minimum',
+    );
+    await emitWithAck(clients[0].socket, 'room:admit_applicant', { applicantId: clients[3].joinPending.applicantId });
+    assert.ok(clients[3].admitSuccess, 'approved applicants must receive an admission event');
+    await waitForAll(clients.slice(0, 4), (state) => state.phase === 'LOBBY');
+
+    const autoAdmitted = await emitWithAck(clients[4].socket, 'room:join', {
+      roomId,
+      playerName: clients[4].name,
+    });
+    assert.equal(autoAdmitted.pending, true);
+    await waitForCondition(() => Boolean(clients[4].joinPending), 'Second applicant did not receive room:join_pending.');
+    assert.ok(clients[4].joinPending);
+    // With four active crew, one pending applicant still cannot launch.
+    await assert.rejects(
+      emitWithAck(clients[0].socket, 'game:start'),
+      /At least 5 connected players are required\./,
+      'the active roster alone must satisfy the launch minimum',
+    );
+    await emitWithAck(clients[0].socket, 'room:toggle_waiting_room', { enabled: false });
+    assert.ok(clients[4].admitSuccess, 'turning the airlock off must admit queued applicants');
     await waitForAll(clients, (state) => state.phase === 'LOBBY');
+    assert.equal(latestStates.get(clients[0].name).players.length, PLAYER_NAMES.length);
+
+    await emitWithAck(clients[0].socket, 'room:toggle_waiting_room', { enabled: true });
+    const cancelledApplicant = await createTestClient(serverUrl, 'Fynn');
+    auxiliaryClients.push(cancelledApplicant);
+    const cancellationRequest = await emitWithAck(cancelledApplicant.socket, 'room:join', {
+      roomId,
+      playerName: cancelledApplicant.name,
+    });
+    assert.equal(cancellationRequest.pending, true);
+    await waitForCondition(() => Boolean(cancelledApplicant.joinPending), 'Cancellation applicant was not queued.');
+    const cancelled = await emitWithAck(cancelledApplicant.socket, 'room:cancel_pending');
+    assert.equal(cancelled.cancelled, true);
+    await waitForCondition(
+      () => !clients[0].pendingApplicants.some((applicant) => applicant.name === cancelledApplicant.name),
+      'Cancelled applicant remained in the host queue.',
+    );
+
+    const disconnectedApplicant = await createTestClient(serverUrl, 'Indigo');
+    auxiliaryClients.push(disconnectedApplicant);
+    const disconnectRequest = await emitWithAck(disconnectedApplicant.socket, 'room:join', {
+      roomId,
+      playerName: disconnectedApplicant.name,
+    });
+    assert.equal(disconnectRequest.pending, true);
+    await waitForCondition(() => Boolean(disconnectedApplicant.joinPending), 'Disconnecting applicant was not queued.');
+    await waitForCondition(
+      () => clients[0].pendingApplicants.some((applicant) => applicant.name === disconnectedApplicant.name),
+      'Host did not see the disconnecting applicant.',
+    );
+    disconnectedApplicant.socket.disconnect();
+    await waitForCondition(
+      () => !clients[0].pendingApplicants.some((applicant) => applicant.name === disconnectedApplicant.name),
+      'Disconnected applicant remained in the host queue.',
+    );
+    assert.equal(clients[0].pendingApplicants.some((applicant) => applicant.name === cancelledApplicant.name), false);
+
+    const deniedApplicant = await createTestClient(serverUrl, 'Gale');
+    auxiliaryClients.push(deniedApplicant);
+    const denialRequest = await emitWithAck(deniedApplicant.socket, 'room:join', {
+      roomId,
+      playerName: deniedApplicant.name,
+    });
+    assert.equal(denialRequest.pending, true);
+    await waitForCondition(() => Boolean(deniedApplicant.joinPending), 'Denied applicant was not queued.');
+    await emitWithAck(clients[0].socket, 'room:reject_applicant', {
+      applicantId: deniedApplicant.joinPending.applicantId,
+    });
+    await waitForCondition(() => Boolean(deniedApplicant.rejection), 'Denied applicant did not receive a rejection reason.');
+    assert.equal(deniedApplicant.rejection?.message, 'Entry denied by outpost commander.');
+    await new Promise((resolve, reject) => {
+      if (!deniedApplicant.socket.connected) return resolve();
+      deniedApplicant.socket.once('disconnect', resolve);
+      setTimeout(() => reject(new Error('Denied applicant connection was not closed.')), 1500);
+    });
+
+    const lateApplicant = await createTestClient(serverUrl, 'Harper');
+    auxiliaryClients.push(lateApplicant);
+    const lateRequest = await emitWithAck(lateApplicant.socket, 'room:join', {
+      roomId,
+      playerName: lateApplicant.name,
+    });
+    assert.equal(lateRequest.pending, true);
+    await waitForCondition(() => Boolean(lateApplicant.joinPending), 'Late applicant was not queued.');
+
     await emitWithAck(clients[0].socket, 'game:start');
     await waitForAll(clients, (state) => state.phase === 'NIGHT');
+    await waitForCondition(() => Boolean(lateApplicant.rejection), 'Pending applicant was not rejected at launch.');
+    assert.equal(lateApplicant.rejection?.message, 'The mission has begun. New admissions are closed.');
 
     const alienClient = clients.find((client) => latestStates.get(client.name).myRole === 'ALIEN');
     assert.ok(alienClient, 'one player must receive the alpha alien role');
@@ -154,16 +301,9 @@ async function run() {
     returningPlayer.socket.disconnect();
     latestStates.delete(returningPlayer.name);
 
-    const replacementSocket = createClient(serverUrl, {
-      transports: ['websocket'],
-      reconnection: false,
-    });
+    const replacementSocket = createSocket(serverUrl);
     returningPlayer.socket = replacementSocket;
-    replacementSocket.on('room:session', (session) => { returningPlayer.session = session; });
-    replacementSocket.on('game:state_sync', (state) => {
-      latestStates.set(returningPlayer.name, state);
-      logState(returningPlayer, state);
-    });
+    wireClient(returningPlayer);
     await new Promise((resolve, reject) => {
       replacementSocket.once('connect', resolve);
       replacementSocket.once('connect_error', reject);
@@ -239,9 +379,10 @@ async function run() {
     assert.equal(disconnectVictory.winner, 'HUMANS', 'the server must check victory when disconnect grace expires');
     assert.equal(disconnectVictory.finalReveal.chainActive, false);
 
-    console.log('Simulation passed: perspective sealing, relay progression, terminal role reveal, reconnect support, host-only rematch reset, immediate tip-disconnect severance, and disconnect-expiry victory checks were verified.');
+    console.log('Simulation passed: open entry, airlock queue/approval/denial/cancellation, launch minimum, admission closure at launch, reconnect bypass, perspective sealing, relay progression, rematch reset, and disconnect victory checks were verified.');
   } finally {
     for (const client of clients) client.socket.disconnect();
+    for (const client of auxiliaryClients) client.socket.disconnect();
     await server.close();
   }
 }
