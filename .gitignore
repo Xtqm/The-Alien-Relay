@@ -2,3 +2,5 @@ node_modules/
 .npm-cache/
 .env
 npm-debug.log*
+alien_relay_game_spec.md
+game_settings_timer_balance_reviews.md
