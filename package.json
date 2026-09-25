@@ -1,0 +1,26 @@
+{
+  "name": "the-relay-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Authoritative Socket.IO backend for The Relay multiplayer game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node -e \"process.env.NODE_ENV='production';require('./server.js').startRelayServer()\"",
+    "dev": "node --watch server.js",
+    "dev:server": "node --watch server.js",
+    "dev:client": "npm --prefix client run dev",
+    "build:client": "npm --prefix client run build",
+    "build": "npm --prefix client install && npm run build:client",
+    "test:client": "node test-client.js",
+    "test": "npm run test:client"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
+  }
+}
