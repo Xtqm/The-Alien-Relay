@@ -96,6 +96,19 @@ export function GameProvider({ children }) {
     socketRef.current = socket;
 
     const onSession = (session) => saveSession(session);
+    const onLeftSuccess = () => {
+      pendingAdmissionRef.current = false;
+      clearSession();
+      previousPhaseRef.current = null;
+      setGameState(null);
+      setIsPendingAdmission(false);
+      setPendingAdmissionInfo(null);
+      setPendingApplicants([]);
+      setRejectionNotice('');
+      setAnnouncements([]);
+      setAnnouncementLog([]);
+      setError('');
+    };
     const onJoinPending = (info) => {
       pendingAdmissionRef.current = true;
       clearSession();
@@ -198,6 +211,7 @@ export function GameProvider({ children }) {
     const onReconnectFailed = () => setConnectionStatus('disconnected');
 
     socket.on('room:session', onSession);
+    socket.on('room:left_success', onLeftSuccess);
     socket.on('room:join_pending', onJoinPending);
     socket.on('room:pending_list_sync', onPendingList);
     socket.on('room:admit_success', onAdmitSuccess);
@@ -214,6 +228,7 @@ export function GameProvider({ children }) {
 
     return () => {
       socket.off('room:session', onSession);
+      socket.off('room:left_success', onLeftSuccess);
       socket.off('room:join_pending', onJoinPending);
       socket.off('room:pending_list_sync', onPendingList);
       socket.off('room:admit_success', onAdmitSuccess);
@@ -249,6 +264,7 @@ export function GameProvider({ children }) {
     setPendingAdmissionInfo(null);
     setPendingApplicants([]);
     setRejectionNotice('');
+    setRejectionNotice('');
     setAnnouncements([]);
     setAnnouncementLog([]);
     const response = await runAction('room:create', { playerName });
@@ -270,6 +286,27 @@ export function GameProvider({ children }) {
     if (!response.pending) saveSession(response);
     return response;
   }, [runAction]);
+
+  const leaveRoom = useCallback(async () => {
+    pendingAdmissionRef.current = false;
+    clearSession();
+    previousPhaseRef.current = null;
+    setGameState(null);
+    setIsPendingAdmission(false);
+    setPendingAdmissionInfo(null);
+    setPendingApplicants([]);
+    setRejectionNotice('');
+    setAnnouncements([]);
+    setAnnouncementLog([]);
+    setError('');
+
+    try {
+      return await emitWithAck(socketRef.current, 'room:leave');
+    } catch (leaveError) {
+      setError(leaveError.message);
+      throw leaveError;
+    }
+  }, []);
 
   const startGame = useCallback(() => runAction('game:start'), [runAction]);
   const resetGame = useCallback(() => runAction('room:play_again'), [runAction]);
@@ -316,6 +353,7 @@ export function GameProvider({ children }) {
     error,
     createRoom,
     joinRoom,
+    leaveRoom,
     startGame,
     resetGame,
     toggleWaitingRoom,
@@ -327,7 +365,7 @@ export function GameProvider({ children }) {
     castVote,
     dismissError,
     dismissRejection,
-  }), [gameState, isPendingAdmission, pendingAdmissionInfo, pendingApplicants, rejectionNotice, connectionStatus, announcements, announcementLog, error, createRoom, joinRoom, startGame, resetGame, toggleWaitingRoom, admitApplicant, rejectApplicant, cancelPendingAdmission, updateRoomSettings, infectPlayer, castVote, dismissError, dismissRejection]);
+  }), [gameState, isPendingAdmission, pendingAdmissionInfo, pendingApplicants, rejectionNotice, connectionStatus, announcements, announcementLog, error, createRoom, joinRoom, leaveRoom, startGame, resetGame, toggleWaitingRoom, admitApplicant, rejectApplicant, cancelPendingAdmission, updateRoomSettings, infectPlayer, castVote, dismissError, dismissRejection]);
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
 }

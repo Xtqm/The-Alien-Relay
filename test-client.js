@@ -73,6 +73,8 @@ function logState(client, state) {
 function wireClient(client) {
   const { socket } = client;
   socket.on('room:session', (session) => { client.session = session; });
+  socket.on('room:left_success', (info) => { client.leftSuccess = info; });
+  socket.on('game:announcement', (announcement) => { client.announcements.push(announcement); });
   socket.on('room:join_pending', (info) => { client.joinPending = info; });
   socket.on('room:admit_success', (info) => { client.admitSuccess = info; });
   socket.on('room:rejected', (info) => { client.rejection = info; });
@@ -89,6 +91,8 @@ async function createTestClient(serverUrl, name) {
     name,
     socket,
     session: null,
+    leftSuccess: null,
+    announcements: [],
     joinPending: null,
     admitSuccess: null,
     rejection: null,
@@ -107,6 +111,110 @@ function createSocket(serverUrl) {
     transports: ['websocket'],
     reconnection: false,
   });
+}
+
+async function verifyVoluntaryLeaves(serverUrl, server) {
+  const trackedClient = async (name) => {
+    const client = await createTestClient(serverUrl, name);
+    auxiliaryClients.push(client);
+    return client;
+  };
+
+  const regularHost = await trackedClient('LeaveHost');
+  const regularLeaver = await trackedClient('LeaveCrew');
+  const regularObserver = await trackedClient('LeaveObserver');
+  const regularRoom = await emitWithAck(regularHost.socket, 'room:create', { playerName: regularHost.name });
+  await emitWithAck(regularLeaver.socket, 'room:join', { roomId: regularRoom.roomId, playerName: regularLeaver.name });
+  await emitWithAck(regularObserver.socket, 'room:join', { roomId: regularRoom.roomId, playerName: regularObserver.name });
+  await waitForAll([regularHost, regularLeaver, regularObserver], (state) => state.phase === 'LOBBY');
+  const oldRegularSession = { ...regularLeaver.session };
+  await emitWithAck(regularLeaver.socket, 'room:leave');
+  await waitForCondition(() => Boolean(regularLeaver.leftSuccess), 'A voluntary lobby departure was not acknowledged.');
+  const regularHostState = await waitForState(regularHost, (state) => state.players.length === 2);
+  assert.ok(!regularHostState.players.some((player) => player.id === oldRegularSession.playerId));
+  assert.equal(server.rooms.get(regularRoom.roomId).players[oldRegularSession.playerId], undefined);
+  assert.equal(server.rooms.get(regularRoom.roomId).disconnectTimers.size, 0, 'a voluntary lobby leave must not create a reconnect timer');
+
+  const staleSessionClient = await trackedClient('StaleSession');
+  await assert.rejects(
+    emitWithAck(staleSessionClient.socket, 'room:reconnect', {
+      roomId: regularRoom.roomId,
+      sessionId: oldRegularSession.sessionId,
+    }),
+    /That reconnect session is invalid or expired\./,
+    'a voluntarily departed seat must not be recoverable with its old session token',
+  );
+
+  const departingHost = await trackedClient('DepartingHost');
+  const migrationCandidateA = await trackedClient('MigrationA');
+  const migrationCandidateB = await trackedClient('MigrationB');
+  const migrationRoom = await emitWithAck(departingHost.socket, 'room:create', { playerName: departingHost.name });
+  await emitWithAck(migrationCandidateA.socket, 'room:join', { roomId: migrationRoom.roomId, playerName: migrationCandidateA.name });
+  await emitWithAck(migrationCandidateB.socket, 'room:join', { roomId: migrationRoom.roomId, playerName: migrationCandidateB.name });
+  await waitForAll([departingHost, migrationCandidateA, migrationCandidateB], (state) => state.phase === 'LOBBY');
+  await emitWithAck(departingHost.socket, 'room:leave');
+  const migrationStates = await waitForAll(
+    [migrationCandidateA, migrationCandidateB],
+    (state) => state.players.length === 2 && state.players.some((player) => player.isHost),
+  );
+  const migratedRoom = server.rooms.get(migrationRoom.roomId);
+  assert.ok([migrationCandidateA.session.playerId, migrationCandidateB.session.playerId].includes(migratedRoom.hostId));
+  assert.ok(migrationStates.some((state) => state.players.find((player) => player.id === state.myPlayerId)?.isHost));
+  assert.ok(
+    [...migrationCandidateA.announcements, ...migrationCandidateB.announcements]
+      .some((announcement) => /has been appointed Outpost Commander\./.test(announcement.text)),
+    'the new lobby host must be announced to the remaining crew',
+  );
+
+  const finalLobbyHost = await trackedClient('FinalLobbyHost');
+  const finalLobby = await emitWithAck(finalLobbyHost.socket, 'room:create', { playerName: finalLobbyHost.name });
+  await emitWithAck(finalLobbyHost.socket, 'room:leave');
+  assert.equal(server.rooms.has(finalLobby.roomId), false, 'the last lobby departure must delete the room');
+
+  const activeCrew = await Promise.all(['ActiveHost', 'ActiveB', 'ActiveC', 'ActiveD', 'ActiveE'].map(trackedClient));
+  const activeCreated = await emitWithAck(activeCrew[0].socket, 'room:create', { playerName: activeCrew[0].name });
+  for (const client of activeCrew.slice(1)) {
+    await emitWithAck(client.socket, 'room:join', { roomId: activeCreated.roomId, playerName: client.name });
+  }
+  await waitForAll(activeCrew, (state) => state.phase === 'LOBBY');
+  const activeRoom = server.rooms.get(activeCreated.roomId);
+  activeRoom.fastTestMode = false;
+  activeRoom.settings.nightDurationSeconds = 30;
+  await emitWithAck(activeCrew[0].socket, 'game:start');
+  await waitForAll(activeCrew, (state) => state.phase === 'NIGHT');
+
+  const hostRecord = activeRoom.players[activeCrew[0].session.playerId];
+  const tipClient = activeCrew.find((client) => client.session.playerId !== hostRecord.id);
+  const tipRecord = activeRoom.players[tipClient.session.playerId];
+  for (const player of Object.values(activeRoom.players)) player.role = 'HUMAN';
+  tipRecord.role = 'ALIEN';
+  activeRoom.alphaAlienId = tipRecord.id;
+  activeRoom.latestAlienId = tipRecord.id;
+  activeRoom.chainActive = true;
+
+  await emitWithAck(activeCrew[0].socket, 'room:leave');
+  assert.equal(hostRecord.isAlive, false, 'a host abandoning an active game must be eliminated immediately');
+  assert.equal(hostRecord.isDisconnected, true);
+  assert.equal(hostRecord.hasPermanentlyLeft, true);
+  assert.equal(activeRoom.disconnectTimers.has(hostRecord.id), false, 'a voluntary active leave must skip reconnect grace');
+  assert.ok(activeRoom.hostId && activeRoom.hostId !== hostRecord.id, 'an active departure must assign authority to a remaining player');
+  assert.equal(activeRoom.phase, 'NIGHT', 'one departure must not prematurely resolve a still-playable match');
+
+  await emitWithAck(tipClient.socket, 'room:leave');
+  assert.equal(activeRoom.chainActive, false, 'a departing relay tip must sever the infection chain immediately');
+  assert.ok(activeRoom.infectionHistory.some((entry) => entry.reason === 'LATEST_ALIEN_ABANDONED'));
+  assert.equal(activeRoom.disconnectTimers.has(tipRecord.id), false);
+  const activeSurvivors = activeCrew.filter((client) => client !== activeCrew[0] && client !== tipClient);
+  const humanVictory = await waitForState(activeSurvivors[0], (state) => state.phase === 'GAME_OVER');
+  assert.equal(humanVictory.winner, 'HUMANS', 'leaving as the last alien must resolve the match immediately');
+
+  const replayHost = activeRoom.players[activeRoom.hostId];
+  const replayHostClient = activeSurvivors.find((client) => client.session.playerId === replayHost.id);
+  assert.ok(replayHostClient, 'the replacement host must remain connected and able to initialize a rematch');
+  await emitWithAck(replayHostClient.socket, 'room:play_again');
+  await waitForAll(activeSurvivors, (state) => state.phase === 'LOBBY' && state.players.length === 3);
+  for (const client of activeSurvivors) await emitWithAck(client.socket, 'room:leave');
+  assert.equal(server.rooms.has(activeCreated.roomId), false, 'the room must be deleted after every participant voluntarily leaves');
 }
 
 async function run() {
@@ -379,7 +487,9 @@ async function run() {
     assert.equal(disconnectVictory.winner, 'HUMANS', 'the server must check victory when disconnect grace expires');
     assert.equal(disconnectVictory.finalReveal.chainActive, false);
 
-    console.log('Simulation passed: open entry, airlock queue/approval/denial/cancellation, launch minimum, admission closure at launch, reconnect bypass, perspective sealing, relay progression, rematch reset, and disconnect victory checks were verified.');
+    await verifyVoluntaryLeaves(serverUrl, server);
+
+    console.log('Simulation passed: lobby departure, random host migration, invalidated leave sessions, last-room cleanup, active elimination, relay severing, immediate victory checks, rematch authority, reconnect grace, and the existing multiplayer cycle were verified.');
   } finally {
     for (const client of clients) client.socket.disconnect();
     for (const client of auxiliaryClients) client.socket.disconnect();

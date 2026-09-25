@@ -340,6 +340,7 @@ function createRelayServer(options = {}) {
       isHost: false,
       isAlive: true,
       isDisconnected: false,
+      hasPermanentlyLeft: false,
       role: 'HUMAN',
       infectedTargetId: null,
       votedFor: null,
@@ -546,9 +547,13 @@ function createRelayServer(options = {}) {
 
   function migrateHost(room) {
     const currentHost = room.players[room.hostId];
-    if (currentHost && currentHost.socketId) return;
+    if (currentHost?.socketId && io.sockets.sockets.get(currentHost.socketId)?.connected) return;
     const nextHost = Object.values(room.players)
-      .filter((player) => player.socketId && player.isAlive)
+      .filter((player) => (
+        player.socketId
+        && io.sockets.sockets.get(player.socketId)?.connected
+        && (room.phase === 'GAME_OVER' || player.isAlive)
+      ))
       .sort((left, right) => left.joinOrder - right.joinOrder)[0];
     if (currentHost) currentHost.isHost = false;
     if (nextHost) {
@@ -557,6 +562,129 @@ function createRelayServer(options = {}) {
     } else {
       room.hostId = null;
     }
+  }
+
+  function assignHostRandomly(room, excludedPlayerId) {
+    for (const player of Object.values(room.players)) player.isHost = false;
+    room.hostId = null;
+    const candidates = Object.values(room.players).filter((player) => (
+      player.id !== excludedPlayerId
+      && player.socketId
+      && !player.isDisconnected
+      && io.sockets.sockets.get(player.socketId)?.connected
+    ));
+    if (candidates.length === 0) return null;
+
+    const nextHost = candidates[crypto.randomInt(candidates.length)];
+    nextHost.isHost = true;
+    room.hostId = nextHost.id;
+    return nextHost;
+  }
+
+  function clearDisconnectTimer(room, playerId) {
+    const timeout = room.disconnectTimers.get(playerId);
+    if (timeout) clearTimeout(timeout);
+    room.disconnectTimers.delete(playerId);
+  }
+
+  function destroyRoom(room, rejectionMessage = 'The outpost is no longer available. Entry was not authorized.') {
+    clearPhaseTimers(room);
+    for (const timeout of room.disconnectTimers.values()) clearTimeout(timeout);
+    room.disconnectTimers.clear();
+    rejectAllPendingApplicants(room, rejectionMessage);
+    if (rooms.get(room.id) === room) rooms.delete(room.id);
+  }
+
+  function announceHostAppointment(room, nextHost) {
+    if (nextHost) announce(room, `${nextHost.name} has been appointed Outpost Commander.`, 'info');
+  }
+
+  function leaveRoom(socket, room, player) {
+    clearDisconnectTimer(room, player.id);
+    socket.data.roomId = null;
+    socket.data.playerId = null;
+    socket.leave(room.id);
+
+    if (room.phase === 'LOBBY') {
+      const wasHost = room.hostId === player.id;
+      if (wasHost) player.isHost = false;
+      player.sessionId = null;
+      player.socketId = null;
+      player.isDisconnected = true;
+      delete room.players[player.id];
+      if (wasHost) {
+        const nextHost = assignHostRandomly(room, player.id);
+        announceHostAppointment(room, nextHost);
+      }
+
+      if (Object.keys(room.players).length === 0) {
+        destroyRoom(room);
+      } else {
+        syncRoom(room);
+        syncPendingApplicants(room);
+      }
+    } else if (room.phase === 'GAME_OVER') {
+      const wasHost = room.hostId === player.id;
+      player.sessionId = null;
+      player.socketId = null;
+      player.isDisconnected = true;
+      player.hasPermanentlyLeft = true;
+      if (wasHost) {
+        const nextHost = assignHostRandomly(room, player.id);
+        announceHostAppointment(room, nextHost);
+      }
+
+      if (Object.values(room.players).every((candidate) => candidate.hasPermanentlyLeft)) {
+        destroyRoom(room);
+      } else {
+        syncRoom(room);
+        syncPendingApplicants(room);
+      }
+    } else {
+      const wasHost = room.hostId === player.id;
+      player.sessionId = null;
+      player.socketId = null;
+      player.isDisconnected = true;
+      player.isAlive = false;
+      player.hasPermanentlyLeft = true;
+
+      if (room.pendingNightTargetId === player.id) room.pendingNightTargetId = null;
+      if (room.latestAlienId === player.id && room.chainActive) {
+        room.chainActive = false;
+        room.pendingNightTargetId = null;
+        addChainEvent(room, {
+          kind: 'CHAIN_BROKEN',
+          status: 'FAILED',
+          reason: 'LATEST_ALIEN_ABANDONED',
+          round: room.roundNumber,
+          playerId: player.id,
+        });
+        announce(room, 'Signal decay // the active relay tip has abandoned the outpost.', 'alert');
+      }
+
+      if (wasHost) {
+        const nextHost = assignHostRandomly(room, player.id);
+        announceHostAppointment(room, nextHost);
+      }
+
+      const canReturn = Object.values(room.players).some((candidate) => (
+        candidate.id !== player.id && !candidate.hasPermanentlyLeft
+      ));
+      if (!canReturn) {
+        destroyRoom(room);
+      } else {
+        const winner = getWinner(room);
+        if (winner) {
+          finishGame(room, winner);
+        } else {
+          syncRoom(room);
+          if (room.phase === 'VOTING' && allLivingPlayersVoted(room)) resolveVotes(room);
+        }
+      }
+    }
+
+    socket.emit('room:left_success', { roomId: room.id });
+    return { left: true };
   }
 
   function removeLobbyPlayer(room, player) {
@@ -731,6 +859,7 @@ function createRelayServer(options = {}) {
         isHost: true,
         isAlive: true,
         isDisconnected: false,
+        hasPermanentlyLeft: false,
         role: 'HUMAN',
         infectedTargetId: null,
         votedFor: null,
@@ -790,6 +919,7 @@ function createRelayServer(options = {}) {
         isHost: false,
         isAlive: true,
         isDisconnected: false,
+        hasPermanentlyLeft: false,
         role: 'HUMAN',
         infectedTargetId: null,
         votedFor: null,
@@ -1000,15 +1130,7 @@ function createRelayServer(options = {}) {
 
     handle(socket, 'room:leave', () => {
       const { room, player } = getAuthenticatedPlayer(socket);
-      if (room.phase === 'LOBBY') {
-        removeLobbyPlayer(room, player);
-      } else {
-        markDisconnected(room, player);
-      }
-      socket.data.roomId = null;
-      socket.data.playerId = null;
-      socket.leave(room.id);
-      return {};
+      return leaveRoom(socket, room, player);
     });
 
     socket.on('disconnect', () => {
