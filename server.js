@@ -205,17 +205,18 @@ function sanitizeStateForPlayer(room, socketId) {
 function countLivingFactions(room) {
   const livingPlayers = Object.values(room.players).filter((player) => player.isAlive);
   const livingAliens = livingPlayers.filter((player) => player.role === 'ALIEN').length;
+  const livingHumans = livingPlayers.filter((player) => player.role === 'HUMAN').length;
   return {
     livingPlayers: livingPlayers.length,
     livingAliens,
-    livingHumans: livingPlayers.length - livingAliens,
+    livingHumans,
   };
 }
 
 function getWinner(room) {
   const { livingAliens, livingHumans } = countLivingFactions(room);
   if (livingAliens === 0) return 'HUMANS';
-  if (livingAliens >= livingHumans) return 'ALIENS';
+  if (livingHumans === 0 && livingAliens > 0) return 'ALIENS';
   return null;
 }
 
@@ -380,7 +381,10 @@ function createRelayServer(options = {}) {
     room.timer = 0;
     room.phaseEndsAt = null;
     room.pendingNightTargetId = null;
-    announce(room, `${room.winner === 'HUMANS' ? 'The humans' : 'The aliens'} win. All roles are revealed.`, 'alert');
+    const ending = room.winner === 'HUMANS'
+      ? 'The humans win. All roles are revealed.'
+      : 'The aliens have converted or eliminated every remaining human. All roles are revealed.';
+    announce(room, ending, 'alert');
     syncRoom(room);
   }
 
@@ -508,8 +512,10 @@ function createRelayServer(options = {}) {
     }
 
     if (room.phase === 'RESOLUTION') {
-      if (room.winner) {
-        finishGame(room, room.winner);
+      const winner = getWinner(room);
+      room.winner = winner;
+      if (winner) {
+        finishGame(room, winner);
         return;
       }
       room.roundNumber += 1;

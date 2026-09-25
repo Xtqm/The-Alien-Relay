@@ -5,7 +5,7 @@
 **The Relay** is a real-time multiplayer social deduction web game for 5–12 players. Unlike traditional hidden-role games (*Mafia*, *Among Us*) where the evil team shares complete information and operates collectively, *The Relay* models the antagonist faction as an **asymmetric, unidirectional linked list (Relay Chain)**.
 
 ### The Lore & Theme
-A crew of humans is operating an isolated outpost. An alien organism has infiltrated the habitat. The humans seek to identify and exile all alien infiltrators to Mars via unanimous or majority vote. The aliens win by equalizing or outnumbering the human crew, or by converting the entire base.
+A crew of humans is operating an isolated outpost. An alien organism has infiltrated the habitat. The humans seek to identify and exile all alien infiltrators to Mars through a strict plurality vote: a player is exiled only when they have more votes than every other player and more votes than `SKIP`; ties or a `SKIP` vote total that meets or exceeds the highest player total result in no exile. Because aliens do not share complete information and cannot coordinate as a bloc, Alien Victory occurs only when no living humans remain.
 
 ---
 
@@ -33,10 +33,8 @@ The infection mechanism follows a strict relay rule: $A \to B \to C \to D$.
    * **Consequence:** The chain breaks permanently (`chainActive = false`). Previous aliens cannot inherit or reactivate the infection capability.
 
 ### 2.3 Win / Loss Conditions
-* **Human Victory:** All Aliens are eliminated (voted out / exiled to Mars).
-* **Alien Victory:** 
-  * Total Living Aliens $\ge$ Total Living Humans (Parity/Majority), OR
-  * Every living player in the match has been infected.
+* **Human Victory:** All living Aliens are eliminated (voted out / exiled to Mars) (`livingAliens === 0`).
+* **Alien Victory:** Every living crew member is an Alien (`livingHumans === 0` and `livingAliens > 0`). Reaching parity with or outnumbering living humans does not end the game while at least one living human remains.
 
 ---
 
@@ -96,8 +94,9 @@ The infection mechanism follows a strict relay rule: $A \to B \to C \to D$.
 5. `RESOLUTION`: Votes are tallied.
    * Player with plurality (and exceeding skips) is exiled.
    * Server checks if the exiled player was the `latestAlienId` (triggering chain break if true).
-   * Server evaluates Win/Loss conditions.
+   * Server evaluates Win/Loss conditions after processing the exile.
    * If no end condition is met, cycles back to `NIGHT`.
+   * Alien Victory is checked after the full Night timer resolves any pending infection. Victory is also checked when a player is permanently removed after disconnect grace or voluntarily leaves.
 6. `GAME_OVER`: Final screen revealing all roles, the full infection chain timeline, and match statistics.
 
 ### 4.2 TypeScript Data Schemas

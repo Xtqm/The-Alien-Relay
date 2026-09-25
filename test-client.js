@@ -389,10 +389,21 @@ async function run() {
       assert.equal(state.allPlayerRoles, undefined, 'full roles must stay sealed during voting');
       assert.equal(state.infectionChainHistory, undefined, 'relay history must stay sealed during voting');
     }
+    const firstRoundExile = clients.find((client) => {
+      const state = latestStates.get(client.name);
+      const me = state.players.find((player) => player.id === state.myPlayerId);
+      return state.myRole === 'HUMAN' && me?.isAlive;
+    });
+    assert.ok(firstRoundExile, 'a living human must be available to demonstrate 2v2 parity');
+    const firstRoundExileId = latestStates.get(firstRoundExile.name).myPlayerId;
     await Promise.all(clients.map((client) => emitWithAck(client.socket, 'vote:cast', {
-      targetPlayerId: 'SKIP',
+      targetPlayerId: firstRoundExileId,
     })));
     await waitForAll(clients, (state) => state.phase === 'RESOLUTION');
+    const parityRoom = server.rooms.get(roomId);
+    assert.equal(Object.values(parityRoom.players).filter((player) => player.isAlive && player.role === 'ALIEN').length, 2);
+    assert.equal(Object.values(parityRoom.players).filter((player) => player.isAlive && player.role === 'HUMAN').length, 2);
+    assert.equal(parityRoom.winner, null, '2 aliens versus 2 humans must not end the match');
     for (const client of clients) {
       const state = latestStates.get(client.name);
       assert.equal(state.allPlayerRoles, undefined, 'full roles must stay sealed during resolution');
@@ -425,25 +436,49 @@ async function run() {
     assert.equal(restoredState.myPlayerId, returningPlayerId);
     assert.equal(restoredState.players.find((player) => player.id === returningPlayerId).isDisconnected, false);
 
-    // Let the active tip convert one more human. That reaches alien parity and
-    // ends the match during the second Night.
+    // Let the active tip convert another human. Three aliens versus one human
+    // must still continue because a living human remains.
     const activeTip = clients.find((client) => latestStates.get(client.name).canInfectTonight);
     assert.ok(activeTip, 'the newest alien must own the second relay transmission');
-    const nextHuman = clients.find((client) => (
-      latestStates.get(client.name).myRole === 'HUMAN'
-      && latestStates.get(client.name).players.find((player) => player.id === latestStates.get(client.name).myPlayerId)?.isAlive
-    ));
+    const nextHuman = clients.find((client) => {
+      const state = latestStates.get(client.name);
+      const me = state.players.find((player) => player.id === state.myPlayerId);
+      return state.myRole === 'HUMAN' && me?.isAlive;
+    });
     assert.ok(nextHuman, 'a living human must be available as a second infection target');
     await emitWithAck(activeTip.socket, 'night:infect', {
       targetPlayerId: latestStates.get(nextHuman.name).myPlayerId,
+    });
+    await waitForAll(clients, (state) => state.phase === 'DAY' && state.roundNumber === 2);
+    assert.equal(server.rooms.get(roomId).winner, null, 'the match must continue while any living human remains');
+    await waitForAll(clients, (state) => state.phase === 'VOTING' && state.roundNumber === 2);
+    const livingClients = clients.filter((client) => {
+      const state = latestStates.get(client.name);
+      const me = state.players.find((player) => player.id === state.myPlayerId);
+      return me?.isAlive;
+    });
+    await Promise.all(livingClients.map((client) => emitWithAck(client.socket, 'vote:cast', {
+      targetPlayerId: 'SKIP',
+    })));
+    await waitForAll(clients, (state) => state.phase === 'NIGHT' && state.roundNumber === 3);
+    const finalTip = clients.find((client) => latestStates.get(client.name).canInfectTonight);
+    const finalHuman = clients.find((client) => {
+      const state = latestStates.get(client.name);
+      const me = state.players.find((player) => player.id === state.myPlayerId);
+      return state.myRole === 'HUMAN' && me?.isAlive;
+    });
+    assert.ok(finalTip && finalHuman, 'the final living human must be available to infect on Night 3');
+    await emitWithAck(finalTip.socket, 'night:infect', {
+      targetPlayerId: latestStates.get(finalHuman.name).myPlayerId,
     });
     await waitForAll(clients, (state) => state.phase === 'GAME_OVER');
 
     for (const client of clients) {
       const state = latestStates.get(client.name);
-      assert.equal(state.winner, 'ALIENS', 'reaching parity must end the match for the aliens');
+      assert.equal(state.winner, 'ALIENS', 'converting the final living human must end the match for the aliens');
+      assert.equal(state.finalReveal.players.filter((player) => player.isAlive && player.role === 'HUMAN').length, 0);
       assert.equal(state.allPlayerRoles.length, PLAYER_NAMES.length, 'the final manifest must reveal every role');
-      assert.equal(state.infectionChainHistory.filter((entry) => entry.status === 'SUCCESS').length, 2);
+      assert.equal(state.infectionChainHistory.filter((entry) => entry.status === 'SUCCESS').length, 3);
       assert.equal(state.finalReveal.chainActive, true, 'the complete relay chain must remain intact');
     }
 
@@ -462,6 +497,30 @@ async function run() {
       assert.equal(state.players.length, PLAYER_NAMES.length, 'connected crew must remain in the room');
       assert.equal(state.myRole, 'HUMAN');
     }
+
+    // Exiling the final living alien must immediately award the humans a win.
+    await emitWithAck(clients[0].socket, 'game:start');
+    await waitForAll(clients, (state) => state.phase === 'NIGHT');
+    await waitForAll(clients, (state) => state.phase === 'DAY');
+    await waitForAll(clients, (state) => state.phase === 'VOTING');
+    const finalAlienRoom = server.rooms.get(roomId);
+    const alphaAlienId = finalAlienRoom.alphaAlienId;
+    for (const player of Object.values(finalAlienRoom.players)) player.role = 'HUMAN';
+    finalAlienRoom.players[alphaAlienId].role = 'ALIEN';
+    const livingAliens = Object.values(finalAlienRoom.players).filter((player) => player.isAlive && player.role === 'ALIEN');
+    assert.equal(livingAliens.length, 1, 'the final-alien scenario must have exactly one living alien before voting');
+    assert.equal(livingAliens[0].id, alphaAlienId, 'the alpha alien must be the final living alien before voting');
+    await Promise.all(clients.map((client) => emitWithAck(client.socket, 'vote:cast', {
+      targetPlayerId: alphaAlienId,
+    })));
+    await waitForAll(clients, (state) => state.phase === 'RESOLUTION');
+    assert.equal(server.rooms.get(roomId).winner, 'HUMANS', 'exiling the final alien must award a human victory');
+    await waitForAll(clients, (state) => state.phase === 'GAME_OVER');
+    for (const client of clients) {
+      assert.equal(latestStates.get(client.name).winner, 'HUMANS');
+    }
+    await emitWithAck(clients[0].socket, 'room:play_again');
+    await waitForAll(clients, (state) => state.phase === 'LOBBY');
 
     // A disconnected spear tip loses transmission authority immediately, while
     // its identity and chain history remain private during the active match.
@@ -489,7 +548,7 @@ async function run() {
 
     await verifyVoluntaryLeaves(serverUrl, server);
 
-    console.log('Simulation passed: lobby departure, random host migration, invalidated leave sessions, last-room cleanup, active elimination, relay severing, immediate victory checks, rematch authority, reconnect grace, and the existing multiplayer cycle were verified.');
+    console.log('Simulation passed: 2v2 parity continuation, total-assimilation alien victory, all-aliens-exiled human victory, lobby departure, random host migration, invalidated leave sessions, last-room cleanup, active elimination, relay severing, rematch authority, reconnect grace, and the multiplayer cycle were verified.');
   } finally {
     for (const client of clients) client.socket.disconnect();
     for (const client of auxiliaryClients) client.socket.disconnect();

@@ -186,14 +186,14 @@ export default function GameOverView({ gameState }) {
     <PhasePanel
       eyebrow="MISSION ARCHIVE // FINAL TRANSMISSION"
       title={won ? 'The habitat survives.' : 'The outpost is lost.'}
-      description={won ? 'The relay organism has been stopped. The remaining crew may return to orbit.' : 'The relay organism now controls the station. No further transmissions are expected.'}
+      description={won ? 'The relay organism has been stopped. The remaining crew may return to orbit.' : 'No living humans remain. The relay organism controls the station.'}
     >
       <div className={`victory-banner relative mb-5 overflow-hidden rounded-lg border p-5 sm:p-7 ${won ? 'victory-human border-cyan-200/25 bg-[radial-gradient(ellipse_at_15%_0%,rgba(34,211,238,0.13),transparent_55%),radial-gradient(ellipse_at_90%_100%,rgba(16,185,129,0.09),transparent_50%),#07110f]' : 'victory-alien border-rose-200/25 bg-[radial-gradient(ellipse_at_15%_0%,rgba(251,113,133,0.15),transparent_55%),radial-gradient(ellipse_at_90%_100%,rgba(251,191,36,0.08),transparent_50%),#13090c]'}`}>
         <div className="relative flex flex-wrap items-center gap-4">
           <span className={`flex h-14 w-14 items-center justify-center rounded border ${won ? 'border-cyan-100/25 bg-cyan-100/[0.05] text-cyan-100 shadow-[0_0_30px_rgba(34,211,238,0.12)]' : 'border-rose-100/25 bg-rose-100/[0.05] text-rose-100 shadow-[0_0_30px_rgba(251,113,133,0.12)]'}`}>{won ? <BadgeCheck size={25} /> : <Skull size={25} />}</span>
           <div className="min-w-0 flex-1">
             <div className={`font-mono text-[9px] uppercase tracking-[0.15em] ${won ? 'text-cyan-100/60' : 'text-rose-100/60'}`}>VICTORIOUS FACTION // {gameState.winner}</div>
-            <h2 className={`mt-2 font-display text-lg font-semibold uppercase leading-snug tracking-[0.04em] sm:text-2xl ${won ? 'text-cyan-50' : 'text-rose-50'}`}>{won ? 'OUTPOST SECURED // ALL PARASITIC ORGANISMS EXILED' : 'HABITAT COMPROMISED // ALIEN PARITY ACHIEVED'}</h2>
+            <h2 className={`mt-2 font-display text-lg font-semibold uppercase leading-snug tracking-[0.04em] sm:text-2xl ${won ? 'text-cyan-50' : 'text-rose-50'}`}>{won ? 'OUTPOST SECURED // ALL PARASITIC ORGANISMS EXILED' : 'HABITAT COMPROMISED // NO LIVING HUMANS REMAIN'}</h2>
           </div>
           <div className="flex items-center gap-2 rounded border border-white/10 bg-black/20 px-3 py-2 font-mono text-[9px] uppercase tracking-[0.1em] text-slate-300"><Sparkles size={12} /> MISSION {String(gameState.roundNumber).padStart(2, '0')}</div>
         </div>
