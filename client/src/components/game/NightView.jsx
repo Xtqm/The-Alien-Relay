@@ -98,14 +98,14 @@ export default function NightView({ gameState }) {
             <span>SELECT A LIVING HOST</span>
             <span className="flex items-center gap-1.5 text-rose-200/55"><ScanEye size={12} /> PRIVATE TO YOUR TERMINAL</span>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid max-h-[min(48dvh,420px)] grid-cols-1 gap-2.5 overflow-y-auto overscroll-contain scroll-smooth pr-1 [-webkit-overflow-scrolling:touch] sm:grid-cols-2 lg:grid-cols-3">
             {candidates.map((player, index) => (
               <button
                 key={player.id}
                 type="button"
                 disabled={submitting}
                 onClick={() => setSelectedTargetId(player.id)}
-                className="group flex min-h-[76px] items-center gap-3 rounded border border-white/[0.075] bg-black/20 px-3.5 py-3 text-left transition hover:border-rose-300/35 hover:bg-rose-300/[0.045] disabled:cursor-wait disabled:opacity-60"
+                className="group flex min-h-[76px] items-center gap-3 rounded border border-white/[0.075] bg-black/20 px-3.5 py-3 text-left transition hover:border-rose-300/35 hover:bg-rose-300/[0.045] active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
               >
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-white/[0.08] bg-white/[0.025] font-mono text-[10px] text-slate-500 transition group-hover:border-rose-300/20 group-hover:text-rose-200">{String(index + 1).padStart(2, '0')}</span>
                 <span className="min-w-0 flex-1">
@@ -128,8 +128,8 @@ export default function NightView({ gameState }) {
             <h2 id="infection-confirm-title" className="font-display text-2xl text-slate-100">Transmit parasite to {selectedTarget.name}?</h2>
             <p className="mt-2 text-xs leading-relaxed text-slate-400">Once accepted, the signal remains encrypted until dawn. This action cannot be recalled.</p>
             <div className="mt-6 grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setSelectedTargetId('')} disabled={submitting} className="flex h-11 items-center justify-center rounded border border-white/10 font-mono text-[9px] uppercase tracking-[0.12em] text-slate-400 transition hover:bg-white/[0.04] disabled:opacity-50">Cancel</button>
-              <button type="button" autoFocus onClick={confirmInfection} disabled={submitting} className="flex h-11 items-center justify-center gap-2 rounded border border-rose-200/25 bg-rose-200/[0.09] font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-rose-100 transition hover:bg-rose-200/[0.15] disabled:opacity-60">{submitting ? <><LoaderCircle size={13} className="animate-spin" /> Transmitting</> : <><Check size={13} /> Confirm transmission</>}</button>
+              <button type="button" onClick={() => setSelectedTargetId('')} disabled={submitting} className="flex h-11 items-center justify-center rounded border border-white/10 font-mono text-[9px] uppercase tracking-[0.12em] text-slate-400 transition hover:bg-white/[0.04] active:scale-[0.98] disabled:opacity-50">Cancel</button>
+              <button type="button" autoFocus onClick={confirmInfection} disabled={submitting} className="flex h-11 items-center justify-center gap-2 rounded border border-rose-200/25 bg-rose-200/[0.09] font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-rose-100 transition hover:bg-rose-200/[0.15] active:scale-[0.98] disabled:opacity-60">{submitting ? <><LoaderCircle size={13} className="animate-spin" /> Transmitting</> : <><Check size={13} /> Confirm transmission</>}</button>
             </div>
           </section>
         </div>

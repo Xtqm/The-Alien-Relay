@@ -101,6 +101,7 @@ function ChainTimeline({ history, alphaAlienId, playerNames, chainActive }) {
           <div className="mb-2 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.15em] text-rose-100/65"><RadioTower size={12} /> CLASSIFIED HISTORY // DECLASSIFIED</div>
           <h2 id="relay-timeline-title" className="font-display text-xl text-slate-100">Relay chain timeline</h2>
         </div>
+        <span className="font-mono text-[8px] uppercase tracking-[0.1em] text-slate-600 sm:hidden">Swipe to trace the chain →</span>
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Show chain through round">
           <button type="button" onClick={() => setSelectedRound('ALL')} aria-pressed={selectedRound === 'ALL'} className={`rounded border px-2.5 py-1.5 font-mono text-[8px] uppercase tracking-[0.1em] transition ${selectedRound === 'ALL' ? 'border-signal/30 bg-signal/[0.06] text-signal' : 'border-white/[0.08] text-slate-500 hover:text-slate-200'}`}>Full chain</button>
           {rounds.map((round) => (
@@ -111,10 +112,10 @@ function ChainTimeline({ history, alphaAlienId, playerNames, chainActive }) {
 
       {visibleNodes.length ? (
         <>
-          <div className="mt-5 flex items-stretch gap-2 overflow-x-auto pb-2">
+        <div className="mt-5 flex items-stretch gap-2 overflow-x-auto overscroll-x-contain scroll-smooth snap-x snap-mandatory pb-2 touch-pan-x [-webkit-overflow-scrolling:touch]">
             {visibleNodes.map((node, index) => (
-              <div key={`${node.playerId}-${node.index}`} className="flex shrink-0 items-center gap-2">
-                <button type="button" onClick={() => setSelectedNodeId(node.playerId)} aria-pressed={selectedNode?.playerId === node.playerId} className={`min-w-[152px] rounded border p-3 text-left transition ${selectedNode?.playerId === node.playerId ? 'border-rose-200/35 bg-rose-200/[0.07] shadow-[0_0_24px_rgba(251,113,133,0.07)]' : 'border-white/[0.08] bg-[#0a0d12] hover:border-rose-200/20'}`}>
+              <div key={`${node.playerId}-${node.index}`} className="flex shrink-0 snap-start items-center gap-2">
+                <button type="button" onClick={() => setSelectedNodeId(node.playerId)} aria-pressed={selectedNode?.playerId === node.playerId} className={`min-w-[152px] rounded border p-3 text-left transition active:scale-[0.98] ${selectedNode?.playerId === node.playerId ? 'border-rose-200/35 bg-rose-200/[0.07] shadow-[0_0_24px_rgba(251,113,133,0.07)]' : 'border-white/[0.08] bg-[#0a0d12] hover:border-rose-200/20'}`}>
                   <div className="flex items-center justify-between gap-2 font-mono text-[8px] uppercase tracking-[0.1em] text-slate-500"><span>{node.kind === 'ALPHA' ? 'ALPHA / PATIENT ZERO' : `NODE ${String.fromCharCode(65 + node.index)}`}</span><span>ROUND {node.round}</span></div>
                   <div className="mt-2 truncate text-sm font-medium text-slate-100">{node.name}</div>
                   {node.kind === 'ALPHA' ? <div className="mt-1 font-mono text-[8px] uppercase tracking-[0.08em] text-rose-200/65">Origin // Round 1</div> : <div className="mt-1 font-mono text-[8px] uppercase tracking-[0.08em] text-slate-600">Transmitted by {node.infectorName}</div>}

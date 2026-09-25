@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Check, Copy, LogOut, Radio, Shield, Signal, SignalZero } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, LogOut, Radio, Signal, SignalZero } from 'lucide-react';
 import { useGame } from '../../hooks/useGame.js';
+import { triggerHaptic } from '../../utils/haptics.js';
 
 const PHASE_LABELS = {
   LOBBY: 'OPEN CHANNEL // ASSEMBLY',
@@ -43,31 +44,45 @@ export default function Header({ gameState, connectionStatus }) {
   };
 
   const online = connectionStatus === 'connected';
+  const roleHorizon = gameState?.myInfectedTarget?.name;
+
+  const revealRole = () => {
+    if (revealed) return;
+    setRevealed(true);
+    triggerHaptic([18]);
+  };
+  const maskRole = () => setRevealed(false);
+  const handleRoleKeyDown = (event) => {
+    if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) {
+      event.preventDefault();
+      revealRole();
+    }
+  };
 
   return (
     <>
-    <header className="relative z-10 border-b border-white/[0.07] bg-[#090c11]/85 backdrop-blur-xl">
-      <div className="mx-auto flex min-h-[76px] max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-7 lg:px-10">
-        <a href="#" aria-label="The Relay home" className="flex shrink-0 items-center gap-3">
+    <header className="relative z-10 border-b border-white/[0.07] bg-[#090c11]/85 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
+      <div className="mx-auto flex min-h-[76px] max-w-7xl flex-wrap items-center justify-between gap-x-2 gap-y-2 px-4 py-2 sm:flex-nowrap sm:gap-4 sm:py-3 sm:px-7 lg:px-10">
+        <a href="#" aria-label="The Relay home" className="flex min-w-0 shrink items-center gap-2 sm:gap-3">
           <span className="relative flex h-10 w-10 items-center justify-center rounded border border-signal/25 bg-signal/[0.07] text-signal shadow-signal">
             <Radio size={19} strokeWidth={1.6} />
             <span className="absolute -right-1 -top-1 h-2 w-2 animate-slow-pulse rounded-full bg-signal" />
           </span>
-          <span>
+          <span className="min-w-0">
             <span className="block font-display text-sm font-bold uppercase tracking-[0.25em] text-slate-100">The Relay</span>
-            <span className="mt-0.5 block font-mono text-[9px] uppercase tracking-[0.22em] text-slate-500">Outpost 09 · Europa</span>
+            <span className="mt-0.5 hidden font-mono text-[9px] uppercase tracking-[0.22em] text-slate-500 sm:block">Outpost 09 · Europa</span>
           </span>
         </a>
 
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1 sm:flex-initial sm:gap-3">
           {gameState?.roomId && (
             <>
               <button
                 onClick={copyRoomCode}
                 title="Copy room code"
-                className="flex h-9 items-center gap-2 rounded border border-white/10 bg-white/[0.035] px-2.5 text-xs transition hover:border-signal/40 hover:bg-signal/[0.06] sm:px-3"
+                className="flex h-9 items-center gap-1 rounded border border-white/10 bg-white/[0.035] px-2 text-xs transition hover:border-signal/40 hover:bg-signal/[0.06] active:scale-[0.98] sm:gap-2 sm:px-3"
               >
-                <span className="font-mono text-[9px] tracking-[0.13em] text-slate-500">ROOM</span>
+                <span className="hidden font-mono text-[9px] tracking-[0.13em] text-slate-500 sm:inline">ROOM</span>
                 <span className="font-mono font-bold tracking-[0.18em] text-slate-100">{gameState.roomId}</span>
                 {copied ? <Check size={13} className="text-signal" /> : <Copy size={13} className="text-slate-500" />}
               </button>
@@ -80,7 +95,7 @@ export default function Header({ gameState, connectionStatus }) {
                 onClick={() => setConfirmingLeave(true)}
                 aria-label="Leave room"
                 title="Leave room"
-                className="flex h-9 items-center gap-1.5 rounded border border-rose-200/15 bg-rose-200/[0.025] px-2.5 font-mono text-[9px] uppercase tracking-[0.1em] text-rose-100/75 transition hover:border-rose-200/30 hover:bg-rose-200/[0.07] hover:text-rose-100 sm:px-3"
+                className="flex h-9 items-center gap-1.5 rounded border border-rose-200/15 bg-rose-200/[0.025] px-2.5 font-mono text-[9px] uppercase tracking-[0.1em] text-rose-100/75 transition hover:border-rose-200/30 hover:bg-rose-200/[0.07] hover:text-rose-100 active:scale-[0.98] sm:px-3"
               >
                 <LogOut size={14} /> <span className="hidden sm:inline">Leave</span>
               </button>
@@ -95,19 +110,34 @@ export default function Header({ gameState, connectionStatus }) {
               {online ? 'LINK OK' : connectionStatus === 'reconnecting' ? 'RELINKING' : connectionStatus.toUpperCase()}
             </span>
           </span>
-          {role && phase !== 'LOBBY' && (
+          {role && phase !== 'LOBBY' && phase !== 'GAME_OVER' && (
             <button
               type="button"
-              onClick={() => setRevealed((value) => !value)}
-              aria-label={`${revealed ? 'Hide' : 'Reveal'} secret role`}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                revealRole();
+              }}
+              onPointerUp={maskRole}
+              onPointerLeave={maskRole}
+              onPointerCancel={maskRole}
+              onKeyDown={handleRoleKeyDown}
+              onKeyUp={(event) => {
+                if (event.key === ' ' || event.key === 'Enter') maskRole();
+              }}
+              onBlur={maskRole}
+              onContextMenu={(event) => event.preventDefault()}
+              aria-label={revealed ? `Secret role ${role}${roleHorizon ? `. Infected ${roleHorizon}` : ''}` : 'Hold to peek at your secret role'}
               aria-pressed={revealed}
-              title="Click to reveal your role. It is also visible while hovering."
-              className={`group flex h-9 items-center gap-1.5 rounded border px-2.5 font-mono text-[9px] tracking-[0.11em] transition ${revealed && role === 'ALIEN' ? 'border-rose-400/30 bg-rose-400/[0.07] text-rose-300' : revealed ? 'border-signal/25 bg-signal/[0.06] text-signal' : 'border-white/10 bg-white/[0.025] text-slate-500'}`}
+              title="Press and hold to peek at your role"
+              className={`flex min-h-11 select-none items-center gap-1.5 rounded border px-2.5 font-mono text-[9px] tracking-[0.11em] transition-colors duration-150 touch-manipulation [-webkit-touch-callout:none] active:scale-[0.98] ${revealed && role === 'ALIEN' ? 'border-rose-400/30 bg-rose-400/[0.07] text-rose-300' : revealed ? 'border-signal/25 bg-signal/[0.06] text-signal' : 'border-white/10 bg-white/[0.025] text-slate-500'}`}
             >
-              <Shield size={13} />
-              <span className="group-hover:hidden">CLASSIFIED</span>
-              <span className="hidden group-hover:inline">{role}</span>
-              <span className={revealed ? 'hidden' : 'ml-0.5 text-slate-600'}>{revealed ? '' : '·'}</span>
+              {revealed ? <Eye size={13} /> : <EyeOff size={13} />}
+              <span className="grid min-w-0">
+                <span aria-hidden={revealed} className={`col-start-1 row-start-1 whitespace-nowrap transition-opacity duration-150 ${revealed ? 'opacity-0' : 'opacity-100'}`}>HOLD TO PEEK ROLE</span>
+                <span aria-hidden={!revealed} className={`col-start-1 row-start-1 whitespace-nowrap transition-opacity duration-150 ${revealed ? 'opacity-100' : 'opacity-0'}`}>
+                  {role}{roleHorizon && <span className="ml-2">· INFECTED: {roleHorizon}</span>}
+                </span>
+              </span>
             </button>
           )}
         </div>

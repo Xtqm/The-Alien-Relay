@@ -25,7 +25,7 @@ export default function App() {
   const inRoom = Boolean(gameState?.roomId);
 
   return (
-    <div className="app-shell min-h-screen bg-void text-slate-100">
+    <div className="app-shell min-h-[100dvh] bg-void text-slate-100">
       <AnnouncementToast announcements={announcements} />
       {inRoom && gameState.phase === 'LOBBY' && <Header gameState={gameState} connectionStatus={connectionStatus} />}
       {error && (
@@ -50,7 +50,7 @@ export default function App() {
       ) : gameState.phase === 'LOBBY' ? (
         <>
           <LobbyView gameState={gameState} />
-          <footer className="mx-auto max-w-7xl px-4 pb-6 font-mono text-[8px] uppercase tracking-[0.15em] text-slate-700 sm:px-7 lg:px-10">EUROPA RESEARCH DIVISION <span className="mx-2">//</span> LOCAL CREW NETWORK</footer>
+          <footer className="mx-auto max-w-7xl px-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] font-mono text-[8px] uppercase tracking-[0.15em] text-slate-700 sm:px-7 lg:px-10">EUROPA RESEARCH DIVISION <span className="mx-2">//</span> LOCAL CREW NETWORK</footer>
         </>
       ) : (
         <ActiveGameShell gameState={gameState} connectionStatus={connectionStatus} announcementLog={announcementLog} />

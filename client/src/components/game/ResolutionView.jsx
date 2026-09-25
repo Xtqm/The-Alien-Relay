@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Clock3, DoorOpen, Fingerprint, Radio, ShieldAlert, Skull, Sparkles } from 'lucide-react';
 import PhasePanel from './PhasePanel.jsx';
+import { triggerHaptic } from '../../utils/haptics.js';
 
 export default function ResolutionView({ gameState }) {
   const [revealed, setRevealed] = useState(false);
@@ -11,7 +12,10 @@ export default function ResolutionView({ gameState }) {
   const ending = Boolean(gameState.winner);
 
   useEffect(() => {
-    const revealTimer = window.setTimeout(() => setRevealed(true), 420);
+    const revealTimer = window.setTimeout(() => {
+      setRevealed(true);
+      if (exiled) triggerHaptic([120, 80, 150]);
+    }, 420);
     return () => window.clearTimeout(revealTimer);
   }, [gameState.roundNumber, exiled?.id]);
 

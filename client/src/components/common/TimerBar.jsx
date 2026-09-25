@@ -1,4 +1,6 @@
+import { useEffect, useRef } from 'react';
 import { Clock3 } from 'lucide-react';
+import { triggerHaptic } from '../../utils/haptics.js';
 
 function getDuration(gameState) {
   const settings = gameState?.settings || {};
@@ -17,6 +19,15 @@ export default function TimerBar({ gameState }) {
   const warning = remaining <= 25 && !urgent;
   const tone = urgent ? 'text-rose-300' : warning ? 'text-amber-200' : 'text-signal';
   const bar = urgent ? 'bg-rose-400' : warning ? 'bg-amber-300' : 'bg-signal';
+  const previousTimer = useRef({ phase: gameState?.phase, remaining });
+
+  useEffect(() => {
+    const previous = previousTimer.current;
+    if (previous.phase === gameState?.phase && previous.remaining > 10 && remaining <= 10) {
+      triggerHaptic([80]);
+    }
+    previousTimer.current = { phase: gameState?.phase, remaining };
+  }, [gameState?.phase, remaining]);
 
   return (
     <section className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3.5 sm:px-7 lg:px-10" aria-label="Phase countdown">

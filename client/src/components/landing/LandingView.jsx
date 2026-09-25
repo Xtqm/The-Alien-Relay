@@ -25,7 +25,7 @@ export default function LandingView({ connectionStatus }) {
   };
 
   return (
-    <div className="mx-auto grid min-h-[calc(100vh-78px)] max-w-7xl items-center gap-12 px-4 pb-16 pt-12 sm:px-7 md:grid-cols-[1.12fr_0.88fr] md:gap-10 lg:px-10">
+    <div className="mx-auto grid min-h-[calc(100dvh-78px)] max-w-7xl items-center gap-12 px-4 pb-[calc(env(safe-area-inset-bottom)+4rem)] pt-12 sm:px-7 md:grid-cols-[1.12fr_0.88fr] md:gap-10 lg:px-10">
       <section className="relative">
         <div className="mb-7 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.2em] text-signal/75">
           <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal opacity-35" /><span className="relative inline-flex h-2 w-2 rounded-full bg-signal" /></span>
@@ -58,10 +58,10 @@ export default function LandingView({ connectionStatus }) {
             </span>
           </div>
           <div className="grid grid-cols-2 gap-1 border-b border-white/[0.075] p-2">
-            <button onClick={() => setMode('create')} className={`flex items-center justify-center gap-2 rounded py-3 font-mono text-[9px] uppercase tracking-[0.13em] transition ${mode === 'create' ? 'bg-signal/[0.08] text-signal' : 'text-slate-600 hover:text-slate-300'}`}>
+            <button type="button" onClick={() => setMode('create')} className={`flex items-center justify-center gap-2 rounded py-3 font-mono text-[9px] uppercase tracking-[0.13em] transition active:scale-[0.98] ${mode === 'create' ? 'bg-signal/[0.08] text-signal' : 'text-slate-600 hover:text-slate-300'}`}>
               <Radio size={13} /> New outpost
             </button>
-            <button onClick={() => setMode('join')} className={`flex items-center justify-center gap-2 rounded py-3 font-mono text-[9px] uppercase tracking-[0.13em] transition ${mode === 'join' ? 'bg-signal/[0.08] text-signal' : 'text-slate-600 hover:text-slate-300'}`}>
+            <button type="button" onClick={() => setMode('join')} className={`flex items-center justify-center gap-2 rounded py-3 font-mono text-[9px] uppercase tracking-[0.13em] transition active:scale-[0.98] ${mode === 'join' ? 'bg-signal/[0.08] text-signal' : 'text-slate-600 hover:text-slate-300'}`}>
               <ArrowRight size={13} /> Join crew
             </button>
           </div>
@@ -69,7 +69,7 @@ export default function LandingView({ connectionStatus }) {
           <form onSubmit={submit} className="p-5 sm:p-6">
             <div className="mb-5">
               <label htmlFor="crew-name" className="mb-2 block font-mono text-[9px] uppercase tracking-[0.15em] text-slate-500">Crew identification</label>
-              <input id="crew-name" value={playerName} onChange={(event) => setPlayerName(event.target.value)} maxLength={16} autoComplete="nickname" required placeholder="ENTER CALLSIGN" className="h-12 w-full rounded border border-white/[0.09] bg-black/25 px-3.5 font-mono text-xs tracking-[0.09em] text-slate-100 outline-none transition placeholder:text-slate-700 focus:border-signal/40 focus:ring-1 focus:ring-signal/15" />
+              <input id="crew-name" value={playerName} onChange={(event) => setPlayerName(event.target.value)} maxLength={16} autoComplete="nickname" required placeholder="ENTER CALLSIGN" className="h-12 w-full rounded border border-white/[0.09] bg-black/25 px-3.5 font-mono text-base tracking-[0.09em] text-slate-100 outline-none transition placeholder:text-slate-700 focus:border-signal/40 focus:ring-1 focus:ring-signal/15" />
             </div>
             {mode === 'join' && (
               <div className="mb-5">
@@ -77,7 +77,7 @@ export default function LandingView({ connectionStatus }) {
                 <input id="room-code" value={roomId} onChange={(event) => setRoomId(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))} required minLength={4} maxLength={4} autoCapitalize="characters" autoComplete="off" placeholder="AB09" className="h-12 w-full rounded border border-white/[0.09] bg-black/25 px-3.5 font-mono text-base tracking-[0.24em] text-slate-100 outline-none transition placeholder:text-slate-700 focus:border-signal/40 focus:ring-1 focus:ring-signal/15" />
               </div>
             )}
-            <button type="submit" disabled={!connected || submitting || !playerName.trim() || (mode === 'join' && roomId.length !== 4)} className="group flex h-12 w-full items-center justify-between rounded border border-signal/30 bg-signal px-4 font-mono text-[10px] font-bold uppercase tracking-[0.13em] text-void shadow-signal transition hover:bg-[#c8ff91] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.055] disabled:text-slate-600 disabled:shadow-none">
+            <button type="submit" disabled={!connected || submitting || !playerName.trim() || (mode === 'join' && roomId.length !== 4)} className="group flex h-12 w-full items-center justify-between rounded border border-signal/30 bg-signal px-4 font-mono text-[10px] font-bold uppercase tracking-[0.13em] text-void shadow-signal transition hover:bg-[#c8ff91] active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.055] disabled:text-slate-600 disabled:shadow-none">
               <span>{submitting ? 'ESTABLISHING UPLINK' : mode === 'create' ? 'Establish new outpost' : 'Enter the outpost'}</span>
               {submitting ? <LoaderCircle size={15} className="animate-spin" /> : <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />}
             </button>

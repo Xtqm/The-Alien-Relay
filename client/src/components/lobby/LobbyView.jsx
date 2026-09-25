@@ -88,7 +88,7 @@ export default function LobbyView({ gameState }) {
   };
 
   return (
-    <div className="mx-auto grid max-w-7xl gap-5 px-4 pb-14 sm:px-7 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.8fr)] lg:gap-6 lg:px-10">
+    <div className="mx-auto grid min-h-[calc(100dvh-100px)] max-w-7xl gap-5 px-4 pb-[calc(env(safe-area-inset-bottom)+3.5rem)] sm:px-7 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.8fr)] lg:gap-6 lg:px-10">
       <section className="panel-grid min-h-[430px] rounded-lg border border-white/[0.085] bg-panel/80 p-5 sm:p-7">
         <div className="mb-7 flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -157,7 +157,7 @@ export default function LobbyView({ gameState }) {
                     value={gameState.settings?.[key] || options[Math.min(1, options.length - 1)]}
                     onChange={(event) => saveSetting(key, event.target.value)}
                     disabled={Boolean(savingSetting) || starting}
-                    className="h-10 w-full rounded border border-white/[0.09] bg-[#080b10] px-3 font-mono text-xs text-slate-200 outline-none transition focus:border-signal/35 focus:ring-1 focus:ring-signal/10 disabled:opacity-60"
+                    className="h-11 w-full rounded border border-white/[0.09] bg-[#080b10] px-3 font-mono text-base text-slate-200 outline-none transition focus:border-signal/35 focus:ring-1 focus:ring-signal/10 disabled:opacity-60"
                   >
                     {options.map((seconds) => <option key={seconds} value={seconds}>{seconds} seconds</option>)}
                   </select>

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import Header from '../common/Header.jsx';
 import TimerBar from '../common/TimerBar.jsx';
 import { Eye } from 'lucide-react';
@@ -7,6 +8,8 @@ import GameOverView from './GameOverView.jsx';
 import NightView from './NightView.jsx';
 import ResolutionView from './ResolutionView.jsx';
 import VotingView from './VotingView.jsx';
+import { useWakeLock } from '../../hooks/useWakeLock.js';
+import { triggerHaptic } from '../../utils/haptics.js';
 
 const PHASE_VIEWS = {
   NIGHT: NightView,
@@ -17,6 +20,17 @@ const PHASE_VIEWS = {
 };
 
 export default function ActiveGameShell({ gameState, connectionStatus, announcementLog }) {
+  const phase = gameState.phase;
+  const previousPhaseRef = useRef(null);
+  useWakeLock(phase !== 'LOBBY' && phase !== 'GAME_OVER');
+
+  useEffect(() => {
+    if ((phase === 'NIGHT' || phase === 'DAY') && previousPhaseRef.current !== phase) {
+      triggerHaptic([40, 60, 40]);
+    }
+    previousPhaseRef.current = phase;
+  }, [phase]);
+
   const PhaseView = PHASE_VIEWS[gameState.phase] || NightView;
   const currentPlayer = gameState.players.find((player) => player.id === gameState.myPlayerId);
   const isObserver = gameState.phase !== 'GAME_OVER' && currentPlayer && !currentPlayer.isAlive;
@@ -24,12 +38,14 @@ export default function ActiveGameShell({ gameState, connectionStatus, announcem
   const showCommanderRoster = isHost && gameState.phase !== 'GAME_OVER' && (gameState.phase !== 'DAY' || isObserver);
 
   return (
-    <>
-      <Header gameState={gameState} connectionStatus={connectionStatus} />
-      {gameState.phase !== 'GAME_OVER' && (
-        <div className="border-b border-white/[0.055]"><TimerBar gameState={gameState} /></div>
-      )}
-      <main className="mx-auto max-w-5xl px-4 pb-16 pt-7 sm:px-7 sm:pt-10 lg:px-10">
+    <div className="min-h-[100dvh] pb-[env(safe-area-inset-bottom)]">
+      <div className="sticky top-0 z-30 bg-[#07090d]/95 backdrop-blur-md">
+        <Header gameState={gameState} connectionStatus={connectionStatus} />
+        {gameState.phase !== 'GAME_OVER' && (
+          <div className="border-b border-white/[0.055]"><TimerBar gameState={gameState} /></div>
+        )}
+      </div>
+      <main className={`mx-auto max-w-5xl px-4 pt-5 sm:px-7 sm:pt-8 lg:px-10 ${gameState.phase === 'VOTING' ? 'pb-[calc(env(safe-area-inset-bottom)+7rem)]' : 'pb-[calc(env(safe-area-inset-bottom)+4rem)]'}`}>
         <div className="mb-5 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.12em] text-slate-600">
           <span>OUTPOST 09 <span className="mx-1.5 text-slate-800">/</span> CYCLE {String(gameState.roundNumber).padStart(2, '0')}</span>
           <span>{gameState.players.filter((player) => player.isAlive).length} CREW LIFE SIGNS</span>
@@ -64,6 +80,6 @@ export default function ActiveGameShell({ gameState, connectionStatus, announcem
           <PhaseView gameState={gameState} announcementLog={announcementLog} />
         </div>
       </main>
-    </>
+    </div>
   );
 }
