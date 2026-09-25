@@ -78,6 +78,7 @@ function wireClient(client) {
   socket.on('room:join_pending', (info) => { client.joinPending = info; });
   socket.on('room:admit_success', (info) => { client.admitSuccess = info; });
   socket.on('room:rejected', (info) => { client.rejection = info; });
+  socket.on('room:kicked', (info) => { client.kickedReason = info?.message || ''; });
   socket.on('room:pending_list_sync', (applicants) => { client.pendingApplicants = applicants; });
   socket.on('game:state_sync', (state) => {
     latestStates.set(client.name, state);
@@ -96,6 +97,7 @@ async function createTestClient(serverUrl, name) {
     joinPending: null,
     admitSuccess: null,
     rejection: null,
+    kickedReason: '',
     pendingApplicants: [],
   };
   wireClient(client);
@@ -215,6 +217,125 @@ async function verifyVoluntaryLeaves(serverUrl, server) {
   await waitForAll(activeSurvivors, (state) => state.phase === 'LOBBY' && state.players.length === 3);
   for (const client of activeSurvivors) await emitWithAck(client.socket, 'room:leave');
   assert.equal(server.rooms.has(activeCreated.roomId), false, 'the room must be deleted after every participant voluntarily leaves');
+}
+
+async function verifyHostKicks(serverUrl, server) {
+  const trackedClient = async (name) => {
+    const client = await createTestClient(serverUrl, name);
+    auxiliaryClients.push(client);
+    return client;
+  };
+
+  const lobbyHost = await trackedClient('KickHost');
+  const lobbyTarget = await trackedClient('LobbyTarget');
+  const lobbyObserver = await trackedClient('LobbyObserver');
+  const lobbyCreated = await emitWithAck(lobbyHost.socket, 'room:create', { playerName: lobbyHost.name });
+  await emitWithAck(lobbyTarget.socket, 'room:join', { roomId: lobbyCreated.roomId, playerName: lobbyTarget.name });
+  await emitWithAck(lobbyObserver.socket, 'room:join', { roomId: lobbyCreated.roomId, playerName: lobbyObserver.name });
+  await waitForAll([lobbyHost, lobbyTarget, lobbyObserver], (state) => state.phase === 'LOBBY');
+
+  const lobbyTargetSession = { ...lobbyTarget.session };
+  await assert.rejects(
+    emitWithAck(lobbyTarget.socket, 'room:kick_player', { targetPlayerId: lobbyObserver.session.playerId }),
+    /Unauthorized: Only the Outpost Commander can kick players\./,
+    'non-hosts must not be able to kick players',
+  );
+  await assert.rejects(
+    emitWithAck(lobbyHost.socket, 'room:kick_player', { targetPlayerId: lobbyHost.session.playerId }),
+    /Invalid target player for dismissal\./,
+    'the host must not be able to kick themselves',
+  );
+  await assert.rejects(
+    emitWithAck(lobbyHost.socket, 'room:kick_player', { targetPlayerId: 'missing-player-id' }),
+    /Invalid target player for dismissal\./,
+    'the host must not be able to kick a nonexistent player',
+  );
+
+  await emitWithAck(lobbyHost.socket, 'room:kick_player', { targetPlayerId: lobbyTargetSession.playerId });
+  await waitForCondition(() => Boolean(lobbyTarget.kickedReason), 'Lobby target did not receive a dismissal event.');
+  assert.equal(lobbyTarget.kickedReason, 'You have been dismissed from the outpost by the Commander.');
+  assert.equal(lobbyTarget.socket.connected, true, 'kicking must leave the connection ready for a future landing-screen action');
+  assert.equal(server.rooms.get(lobbyCreated.roomId).players[lobbyTargetSession.playerId], undefined);
+  assert.equal(lobbyTarget.session.sessionId, lobbyTargetSession.sessionId, 'the test retains only its local stale token');
+  const lobbyHostState = await waitForState(lobbyHost, (state) => state.players.length === 2);
+  assert.ok(!lobbyHostState.players.some((player) => player.id === lobbyTargetSession.playerId));
+  await waitForCondition(
+    () => lobbyHost.announcements.some((announcement) => (
+      announcement.text === 'LobbyTarget was dismissed from the outpost by KickHost.'
+    )),
+    'Remaining lobby members did not receive the dismissal announcement.',
+  );
+  await assert.rejects(
+    emitWithAck(lobbyTarget.socket, 'room:reconnect', {
+      roomId: lobbyCreated.roomId,
+      sessionId: lobbyTargetSession.sessionId,
+    }),
+    /That reconnect session is invalid or expired\./,
+    'a lobby kick must invalidate the server-side reconnect token',
+  );
+
+  const activeCrew = await Promise.all(['KickCommander', 'TipCandidate', 'HumanTarget', 'KickCrewD', 'KickCrewE'].map(trackedClient));
+  const activeCreated = await emitWithAck(activeCrew[0].socket, 'room:create', { playerName: activeCrew[0].name });
+  for (const client of activeCrew.slice(1)) {
+    await emitWithAck(client.socket, 'room:join', { roomId: activeCreated.roomId, playerName: client.name });
+  }
+  await waitForAll(activeCrew, (state) => state.phase === 'LOBBY');
+  await emitWithAck(activeCrew[0].socket, 'game:start');
+  await waitForAll(activeCrew, (state) => state.phase === 'NIGHT');
+
+  const activeRoom = server.rooms.get(activeCreated.roomId);
+  const tip = activeRoom.players[activeCrew[1].session.playerId];
+  const humanTarget = activeRoom.players[activeCrew[2].session.playerId];
+  for (const player of Object.values(activeRoom.players)) player.role = 'HUMAN';
+  tip.role = 'ALIEN';
+  activeRoom.alphaAlienId = tip.id;
+  activeRoom.latestAlienId = tip.id;
+  activeRoom.chainActive = true;
+  const humanTargetSession = { ...activeCrew[2].session };
+
+  await waitForAll(activeCrew, (state) => state.phase === 'DAY');
+  await waitForAll(activeCrew, (state) => state.phase === 'VOTING');
+  await emitWithAck(activeCrew[0].socket, 'room:kick_player', { targetPlayerId: humanTarget.id });
+  await waitForCondition(() => Boolean(activeCrew[2].kickedReason), 'Active target did not receive a dismissal event.');
+  assert.equal(activeCrew[2].kickedReason, 'You have been exiled from the outpost by the Commander.');
+  assert.equal(humanTarget.isAlive, false, 'a kicked active player must be eliminated immediately');
+  assert.equal(humanTarget.isDisconnected, true);
+  assert.equal(humanTarget.hasPermanentlyLeft, true);
+  assert.equal(humanTarget.sessionId, null, 'active kicks must invalidate reconnect credentials');
+  assert.equal(humanTarget.socketId, null);
+  assert.equal(activeRoom.phase, 'VOTING', 'a continuing match must retain its current phase timer');
+  assert.equal(activeRoom.chainActive, true, 'kicking a human must leave the relay chain intact');
+
+  const activeSurvivors = activeCrew.filter((client) => client !== activeCrew[2]);
+  const updatedManifest = await waitForState(activeCrew[0], (state) => (
+    state.phase === 'VOTING'
+    && state.players.find((player) => player.id === humanTargetSession.playerId)?.isAlive === false
+    && state.players.find((player) => player.id === humanTargetSession.playerId)?.isDisconnected === true
+  ));
+  assert.equal(updatedManifest.players.length, 5, 'active kicks retain an eliminated seat in the match manifest');
+  await Promise.all(activeSurvivors.map((client) => emitWithAck(client.socket, 'vote:cast', { targetPlayerId: 'SKIP' })));
+  await waitForAll(activeSurvivors, (state) => state.phase === 'RESOLUTION');
+  await waitForAll(activeSurvivors, (state) => state.phase === 'NIGHT' && state.roundNumber === 2);
+
+  const tipSession = { ...activeCrew[1].session };
+  await emitWithAck(activeCrew[0].socket, 'room:kick_player', { targetPlayerId: tip.id });
+  await waitForCondition(() => Boolean(activeCrew[1].kickedReason), 'Kicked relay tip did not receive a dismissal event.');
+  assert.equal(activeRoom.chainActive, false, 'kicking the relay tip must sever the chain immediately');
+  assert.ok(activeRoom.infectionHistory.some((entry) => entry.reason === 'LATEST_ALIEN_KICKED'));
+  assert.equal(activeRoom.phase, 'GAME_OVER', 'removing the final living alien must trigger an immediate human victory');
+  assert.equal(activeRoom.winner, 'HUMANS');
+  assert.equal(tip.sessionId, null, 'the kicked relay tip must lose reconnect credentials');
+  const activeFinal = await waitForState(activeCrew[0], (state) => state.phase === 'GAME_OVER');
+  assert.equal(activeFinal.finalReveal.chainActive, false);
+  assert.ok(activeFinal.infectionChainHistory.some((entry) => entry.reason === 'LATEST_ALIEN_KICKED'));
+  await assert.rejects(
+    emitWithAck(activeCrew[1].socket, 'room:reconnect', {
+      roomId: activeCreated.roomId,
+      sessionId: tipSession.sessionId,
+    }),
+    /That reconnect session is invalid or expired\./,
+    'an active-match kick must not be recoverable by refreshing the browser',
+  );
 }
 
 async function run() {
@@ -547,8 +668,9 @@ async function run() {
     assert.equal(disconnectVictory.finalReveal.chainActive, false);
 
     await verifyVoluntaryLeaves(serverUrl, server);
+    await verifyHostKicks(serverUrl, server);
 
-    console.log('Simulation passed: 2v2 parity continuation, total-assimilation alien victory, all-aliens-exiled human victory, lobby departure, random host migration, invalidated leave sessions, last-room cleanup, active elimination, relay severing, rematch authority, reconnect grace, and the multiplayer cycle were verified.');
+    console.log('Simulation passed: airlock admission, 2v2 parity, assimilation and exile victories, voluntary leave, host migration, lobby and active kicks, kick-session invalidation, relay-tip severance, reconnect grace, rematch authority, and the multiplayer cycle were verified.');
   } finally {
     for (const client of clients) client.socket.disconnect();
     for (const client of auxiliaryClients) client.socket.disconnect();

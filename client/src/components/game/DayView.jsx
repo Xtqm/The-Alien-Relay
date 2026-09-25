@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Activity, AlertTriangle, Check, Clock3, Copy, Radio, Share2, Sun } from 'lucide-react';
 import PhasePanel from './PhasePanel.jsx';
+import KickPlayerButton from './KickPlayerButton.jsx';
 
 function CrewStatus({ player, wasExiled }) {
   const disconnected = player.isDisconnected;
@@ -17,6 +18,8 @@ function CrewStatus({ player, wasExiled }) {
 export default function DayView({ gameState, announcementLog = [] }) {
   const [copied, setCopied] = useState(false);
   const living = gameState.players.filter((player) => player.isAlive && !player.isDisconnected);
+  const currentPlayer = gameState.players.find((player) => player.id === gameState.myPlayerId);
+  const isHost = currentPlayer?.isHost === true;
   const remaining = Math.max(0, Number(gameState.timer) || 0);
   const urgent = remaining <= 15;
   const roundMilestone = useMemo(() => ({
@@ -66,7 +69,10 @@ export default function DayView({ gameState, announcementLog = [] }) {
                   {player.name}{player.id === gameState.myPlayerId && <span className="ml-2 font-mono text-[8px] text-slate-600">YOU</span>}
                   {gameState.myInfectedTarget?.id === player.id && <span className="ml-2 inline-flex items-center gap-1 rounded border border-rose-200/20 bg-rose-200/[0.045] px-1.5 py-0.5 align-middle font-mono text-[8px] uppercase tracking-[0.07em] text-rose-100/75"><Radio size={9} /> YOUR RELAY</span>}
                 </span>
-                <CrewStatus player={player} wasExiled={gameState.lastExiled?.id === player.id} />
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <CrewStatus player={player} wasExiled={gameState.lastExiled?.id === player.id} />
+                  {isHost && player.id !== gameState.myPlayerId && <KickPlayerButton player={player} />}
+                </div>
               </div>
             ))}
           </div>

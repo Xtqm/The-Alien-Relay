@@ -1,6 +1,7 @@
 import Header from '../common/Header.jsx';
 import TimerBar from '../common/TimerBar.jsx';
 import { Eye } from 'lucide-react';
+import KickPlayerButton from './KickPlayerButton.jsx';
 import DayView from './DayView.jsx';
 import GameOverView from './GameOverView.jsx';
 import NightView from './NightView.jsx';
@@ -19,6 +20,8 @@ export default function ActiveGameShell({ gameState, connectionStatus, announcem
   const PhaseView = PHASE_VIEWS[gameState.phase] || NightView;
   const currentPlayer = gameState.players.find((player) => player.id === gameState.myPlayerId);
   const isObserver = gameState.phase !== 'GAME_OVER' && currentPlayer && !currentPlayer.isAlive;
+  const isHost = currentPlayer?.isHost === true;
+  const showCommanderRoster = isHost && gameState.phase !== 'GAME_OVER' && (gameState.phase !== 'DAY' || isObserver);
 
   return (
     <>
@@ -39,6 +42,23 @@ export default function ActiveGameShell({ gameState, connectionStatus, announcem
               <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.09em] text-slate-400">You have been exiled — restricted from tribunal participation.</p>
             </div>
           </div>
+        )}
+        {showCommanderRoster && (
+          <section className="mb-5 rounded-lg border border-rose-200/15 bg-rose-200/[0.025] p-4" aria-label="Commander crew moderation">
+            <div className="mb-3 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.14em] text-rose-100/65">
+              <span className="h-1.5 w-1.5 rounded-full bg-rose-200/70" /> COMMANDER // PERSONNEL ACTIONS
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {gameState.players.filter((player) => player.id !== gameState.myPlayerId).map((player) => (
+                <div key={player.id} className="flex min-w-0 items-center gap-2 rounded border border-white/[0.055] bg-black/15 px-3 py-2">
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${player.isAlive && !player.isDisconnected ? 'bg-signal/75' : 'bg-slate-600'}`} />
+                  <span className="min-w-0 flex-1 truncate text-xs text-slate-300">{player.name}</span>
+                  <span className="shrink-0 font-mono text-[7px] uppercase tracking-[0.06em] text-slate-600">{player.isDisconnected ? 'Offline' : player.isAlive ? 'Active' : 'Exiled'}</span>
+                  <KickPlayerButton player={player} showLabel />
+                </div>
+              ))}
+            </div>
+          </section>
         )}
         <div className={isObserver ? 'observer-screen grayscale-[0.45] saturate-50' : ''} inert={isObserver || undefined}>
           <PhaseView gameState={gameState} announcementLog={announcementLog} />

@@ -13,7 +13,9 @@ export default function App() {
     isPendingAdmission,
     pendingAdmissionInfo,
     rejectionNotice,
+    kickedReason,
     dismissRejection,
+    dismissKicked,
     connectionStatus,
     announcements,
     error,
@@ -61,6 +63,16 @@ export default function App() {
             <h1 id="airlock-rejected-title" className="mt-2 font-display text-2xl text-slate-100">Entry was not authorized.</h1>
             <p className="mt-2 text-sm leading-relaxed text-slate-400">{rejectionNotice}</p>
             <button type="button" onClick={dismissRejection} className="mt-6 flex h-11 w-full items-center justify-center rounded border border-rose-200/20 bg-rose-200/[0.07] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-rose-100 transition hover:bg-rose-200/[0.12]">Return to access terminal</button>
+          </section>
+        </div>
+      )}
+      {kickedReason && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="commander-dismissal-title" className="w-full max-w-md rounded-lg border border-rose-200/25 bg-[#0b0e13] p-6 shadow-[0_0_75px_rgba(244,63,94,0.16)]">
+            <div className="font-mono text-[9px] uppercase tracking-[0.17em] text-rose-200/70">OUTPOST COMMAND // DISMISSAL NOTICE</div>
+            <h1 id="commander-dismissal-title" className="mt-2 font-display text-2xl text-slate-100">Access revoked.</h1>
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">{kickedReason}</p>
+            <button type="button" onClick={dismissKicked} className="mt-6 flex h-11 w-full items-center justify-center rounded border border-rose-200/20 bg-rose-200/[0.07] font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-rose-100 transition hover:bg-rose-200/[0.12]">Return to access terminal</button>
           </section>
         </div>
       )}

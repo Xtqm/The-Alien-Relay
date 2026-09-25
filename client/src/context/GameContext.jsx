@@ -72,6 +72,7 @@ export function GameProvider({ children }) {
   const [pendingAdmissionInfo, setPendingAdmissionInfo] = useState(null);
   const [pendingApplicants, setPendingApplicants] = useState([]);
   const [rejectionNotice, setRejectionNotice] = useState('');
+  const [kickedReason, setKickedReason] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [announcements, setAnnouncements] = useState([]);
   const [announcementLog, setAnnouncementLog] = useState([]);
@@ -105,6 +106,7 @@ export function GameProvider({ children }) {
       setPendingAdmissionInfo(null);
       setPendingApplicants([]);
       setRejectionNotice('');
+      setKickedReason('');
       setAnnouncements([]);
       setAnnouncementLog([]);
       setError('');
@@ -135,6 +137,20 @@ export function GameProvider({ children }) {
       setPendingApplicants([]);
       setRejectionNotice(payload?.message || 'Entry denied by outpost commander.');
       rejectedDisconnectRef.current = true;
+    };
+    const onKicked = (payload) => {
+      pendingAdmissionRef.current = false;
+      clearSession();
+      previousPhaseRef.current = null;
+      setGameState(null);
+      setIsPendingAdmission(false);
+      setPendingAdmissionInfo(null);
+      setPendingApplicants([]);
+      setRejectionNotice('');
+      setKickedReason(payload?.message || 'You have been dismissed from the outpost by the Commander.');
+      setAnnouncements([]);
+      setAnnouncementLog([]);
+      setError('');
     };
     const onState = (nextState) => {
       if (!nextState || typeof nextState !== 'object') return;
@@ -216,6 +232,7 @@ export function GameProvider({ children }) {
     socket.on('room:pending_list_sync', onPendingList);
     socket.on('room:admit_success', onAdmitSuccess);
     socket.on('room:rejected', onRejected);
+    socket.on('room:kicked', onKicked);
     socket.on('game:state_sync', onState);
     socket.on('game:announcement', onAnnouncement);
     socket.on('room:error', onRoomError);
@@ -233,6 +250,7 @@ export function GameProvider({ children }) {
       socket.off('room:pending_list_sync', onPendingList);
       socket.off('room:admit_success', onAdmitSuccess);
       socket.off('room:rejected', onRejected);
+      socket.off('room:kicked', onKicked);
       socket.off('game:state_sync', onState);
       socket.off('game:announcement', onAnnouncement);
       socket.off('room:error', onRoomError);
@@ -264,7 +282,7 @@ export function GameProvider({ children }) {
     setPendingAdmissionInfo(null);
     setPendingApplicants([]);
     setRejectionNotice('');
-    setRejectionNotice('');
+    setKickedReason('');
     setAnnouncements([]);
     setAnnouncementLog([]);
     const response = await runAction('room:create', { playerName });
@@ -280,6 +298,7 @@ export function GameProvider({ children }) {
     setPendingAdmissionInfo(null);
     setPendingApplicants([]);
     setRejectionNotice('');
+    setKickedReason('');
     setAnnouncements([]);
     setAnnouncementLog([]);
     const response = await runAction('room:join', { roomId, playerName });
@@ -296,6 +315,7 @@ export function GameProvider({ children }) {
     setPendingAdmissionInfo(null);
     setPendingApplicants([]);
     setRejectionNotice('');
+    setKickedReason('');
     setAnnouncements([]);
     setAnnouncementLog([]);
     setError('');
@@ -319,6 +339,9 @@ export function GameProvider({ children }) {
   const rejectApplicant = useCallback((applicantId) => (
     runAction('room:reject_applicant', { applicantId })
   ), [runAction]);
+  const kickPlayer = useCallback((targetPlayerId) => (
+    runAction('room:kick_player', { targetPlayerId })
+  ), [runAction]);
   const cancelPendingAdmission = useCallback(async () => {
     const response = await runAction('room:cancel_pending');
     if (response.cancelled) {
@@ -340,6 +363,7 @@ export function GameProvider({ children }) {
   ), [runAction]);
   const dismissError = useCallback(() => setError(''), []);
   const dismissRejection = useCallback(() => setRejectionNotice(''), []);
+  const dismissKicked = useCallback(() => setKickedReason(''), []);
 
   const value = useMemo(() => ({
     gameState,
@@ -347,6 +371,7 @@ export function GameProvider({ children }) {
     pendingAdmissionInfo,
     pendingApplicants,
     rejectionNotice,
+    kickedReason,
     connectionStatus,
     announcements,
     announcementLog,
@@ -359,13 +384,15 @@ export function GameProvider({ children }) {
     toggleWaitingRoom,
     admitApplicant,
     rejectApplicant,
+    kickPlayer,
     cancelPendingAdmission,
     updateRoomSettings,
     infectPlayer,
     castVote,
     dismissError,
     dismissRejection,
-  }), [gameState, isPendingAdmission, pendingAdmissionInfo, pendingApplicants, rejectionNotice, connectionStatus, announcements, announcementLog, error, createRoom, joinRoom, leaveRoom, startGame, resetGame, toggleWaitingRoom, admitApplicant, rejectApplicant, cancelPendingAdmission, updateRoomSettings, infectPlayer, castVote, dismissError, dismissRejection]);
+    dismissKicked,
+  }), [gameState, isPendingAdmission, pendingAdmissionInfo, pendingApplicants, rejectionNotice, kickedReason, connectionStatus, announcements, announcementLog, error, createRoom, joinRoom, leaveRoom, startGame, resetGame, toggleWaitingRoom, admitApplicant, rejectApplicant, kickPlayer, cancelPendingAdmission, updateRoomSettings, infectPlayer, castVote, dismissError, dismissRejection, dismissKicked]);
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
 }

@@ -1139,6 +1139,92 @@ function createRelayServer(options = {}) {
       return leaveRoom(socket, room, player);
     });
 
+    handle(socket, 'room:kick_player', (payload) => {
+      const { room, player: commander } = getAuthenticatedPlayer(socket);
+      if (commander.isHost !== true || room.hostId !== commander.id) {
+        throw new Error('Unauthorized: Only the Outpost Commander can kick players.');
+      }
+      if (!isPlainObject(payload) || typeof payload.targetPlayerId !== 'string') {
+        throw new Error('Invalid target player for dismissal.');
+      }
+
+      const target = room.players[payload.targetPlayerId];
+      if (!target || target.id === commander.id || room.phase === 'GAME_OVER') {
+        throw new Error('Invalid target player for dismissal.');
+      }
+
+      const targetSocket = target.socketId ? io.sockets.sockets.get(target.socketId) : null;
+      const targetName = target.name;
+      const hostName = commander.name;
+      clearDisconnectTimer(room, target.id);
+      target.sessionId = null;
+      target.socketId = null;
+      target.isDisconnected = true;
+      target.hasPermanentlyLeft = true;
+
+      if (targetSocket) {
+        targetSocket.data.roomId = null;
+        targetSocket.data.playerId = null;
+        targetSocket.leave(room.id);
+      }
+
+      if (room.phase === 'LOBBY') {
+        delete room.players[target.id];
+        if (targetSocket) {
+          targetSocket.emit('room:kicked', {
+            message: 'You have been dismissed from the outpost by the Commander.',
+          });
+        }
+        announce(room, `${targetName} was dismissed from the outpost by ${hostName}.`, 'alert');
+        syncRoom(room);
+        syncPendingApplicants(room);
+        return { kickedPlayerId: target.id };
+      }
+
+      target.isAlive = false;
+      if (room.pendingNightTargetId === target.id) {
+        room.pendingNightTargetId = null;
+        addChainEvent(room, {
+          kind: 'FAILED',
+          status: 'FAILED',
+          reason: 'TARGET_KICKED',
+          round: room.roundNumber,
+          infectorId: room.latestAlienId,
+          targetId: target.id,
+        });
+      }
+
+      if (target.id === room.latestAlienId && room.chainActive) {
+        room.chainActive = false;
+        room.pendingNightTargetId = null;
+        addChainEvent(room, {
+          kind: 'CHAIN_BROKEN',
+          status: 'FAILED',
+          reason: 'LATEST_ALIEN_KICKED',
+          round: room.roundNumber,
+          playerId: target.id,
+        });
+        announce(room, 'TRANSMISSION ANOMALY // Spear tip signal terminated.', 'alert');
+      }
+
+      if (targetSocket) {
+        targetSocket.emit('room:kicked', {
+          message: 'You have been exiled from the outpost by the Commander.',
+        });
+      }
+      announce(room, `${targetName} was removed from active duty by Commander decree.`, 'alert');
+
+      const winner = getWinner(room);
+      if (winner) {
+        finishGame(room, winner);
+      } else if (room.phase === 'VOTING' && allLivingPlayersVoted(room)) {
+        resolveVotes(room);
+      } else {
+        syncRoom(room);
+      }
+      return { kickedPlayerId: target.id, phase: room.phase };
+    });
+
     socket.on('disconnect', () => {
       const pendingRoom = rooms.get(socket.data.pendingRoomId);
       const pendingApplicant = pendingRoom?.pendingApplicants[socket.id];
