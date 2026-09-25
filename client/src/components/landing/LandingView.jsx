@@ -3,7 +3,7 @@ import { ArrowRight, Fingerprint, LoaderCircle, Radio, ScanLine, ShieldCheck, Si
 import { useGame } from '../../hooks/useGame.js';
 
 export default function LandingView({ connectionStatus }) {
-  const { createRoom, joinRoom } = useGame();
+  const { createRoom, joinRoom, joinCooldownSeconds } = useGame();
   const [mode, setMode] = useState('create');
   const [playerName, setPlayerName] = useState('');
   const [roomId, setRoomId] = useState('');
@@ -12,7 +12,7 @@ export default function LandingView({ connectionStatus }) {
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!connected || submitting) return;
+    if (!connected || submitting || (mode === 'join' && joinCooldownSeconds > 0)) return;
     setSubmitting(true);
     try {
       if (mode === 'create') await createRoom(playerName);
@@ -77,8 +77,14 @@ export default function LandingView({ connectionStatus }) {
                 <input id="room-code" value={roomId} onChange={(event) => setRoomId(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))} required minLength={4} maxLength={4} autoCapitalize="characters" autoComplete="off" placeholder="AB09" className="h-12 w-full rounded border border-white/[0.09] bg-black/25 px-3.5 font-mono text-base tracking-[0.24em] text-slate-100 outline-none transition placeholder:text-slate-700 focus:border-signal/40 focus:ring-1 focus:ring-signal/15" />
               </div>
             )}
-            <button type="submit" disabled={!connected || submitting || !playerName.trim() || (mode === 'join' && roomId.length !== 4)} className="group flex h-12 w-full items-center justify-between rounded border border-signal/30 bg-signal px-4 font-mono text-[10px] font-bold uppercase tracking-[0.13em] text-void shadow-signal transition hover:bg-[#c8ff91] active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.055] disabled:text-slate-600 disabled:shadow-none">
-              <span>{submitting ? 'ESTABLISHING UPLINK' : mode === 'create' ? 'Establish new outpost' : 'Enter the outpost'}</span>
+            {mode === 'join' && joinCooldownSeconds > 0 && (
+              <div role="alert" aria-live="assertive" className="mb-4 flex items-center gap-2 rounded border border-rose-300/30 bg-rose-300/[0.09] px-3.5 py-3 font-mono text-[10px] font-semibold uppercase tracking-[0.09em] text-rose-100 shadow-[0_0_28px_rgba(251,113,133,0.08)]">
+                <Signal size={14} className="shrink-0 text-rose-200" />
+                <span>Too many attempts. Locked for {joinCooldownSeconds}s</span>
+              </div>
+            )}
+            <button type="submit" disabled={!connected || submitting || !playerName.trim() || (mode === 'join' && (roomId.length !== 4 || joinCooldownSeconds > 0))} className="group flex h-12 w-full items-center justify-between rounded border border-signal/30 bg-signal px-4 font-mono text-[10px] font-bold uppercase tracking-[0.13em] text-void shadow-signal transition hover:bg-[#c8ff91] active:scale-[0.98] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.055] disabled:text-slate-600 disabled:shadow-none">
+              <span>{submitting ? 'ESTABLISHING UPLINK' : mode === 'create' ? 'Establish new outpost' : joinCooldownSeconds > 0 ? `Locked · ${joinCooldownSeconds}s` : 'Enter the outpost'}</span>
               {submitting ? <LoaderCircle size={15} className="animate-spin" /> : <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />}
             </button>
             <p className="mt-4 text-center font-mono text-[8px] leading-relaxed tracking-[0.08em] text-slate-700">YOUR CONNECTION IS ENCRYPTED // SESSION RESUMES AUTOMATICALLY</p>

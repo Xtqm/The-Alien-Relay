@@ -29,6 +29,11 @@ const PHASES = Object.freeze([
 ]);
 
 const ROOM_CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const JOIN_FAILURE_WINDOW_MS = 60_000;
+const JOIN_FAILURE_LIMIT = 5;
+const JOIN_LOCKOUT_MS = 60_000;
+const JOIN_FAILURE_PRUNE_INTERVAL_MS = 5 * 60_000;
+const JOIN_RATE_LIMIT_MESSAGE = 'Too many failed join attempts. System locked.';
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -225,6 +230,16 @@ function createRelayServer(options = {}) {
     ? /^(1|true|yes)$/i.test(process.env.FAST_TEST_MODE || '')
     : Boolean(options.fastTestMode);
   const rooms = new Map();
+  const joinFailuresByIp = new Map();
+  const joinFailureCleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, entry] of joinFailuresByIp) {
+      if (entry.lockoutExpiresAt <= now && now - entry.lastAttemptAt >= JOIN_FAILURE_PRUNE_INTERVAL_MS) {
+        joinFailuresByIp.delete(ip);
+      }
+    }
+  }, JOIN_FAILURE_PRUNE_INTERVAL_MS);
+  joinFailureCleanupInterval.unref?.();
   const app = express();
   const httpServer = http.createServer(app);
   const configuredOrigins = process.env.CORS_ORIGIN
@@ -275,6 +290,50 @@ function createRelayServer(options = {}) {
     if (phase === 'VOTING') return room.settings.votingDurationSeconds;
     if (phase === 'RESOLUTION') return room.settings.resolutionDurationSeconds;
     return 0;
+  }
+
+  function getClientIp(socket) {
+    const forwardedFor = socket.handshake.headers['x-forwarded-for'];
+    const forwardedIp = typeof forwardedFor === 'string'
+      ? forwardedFor.split(',')[0].trim()
+      : '';
+    return forwardedIp || socket.handshake.address || 'unknown';
+  }
+
+  function assertJoinAllowed(socket) {
+    const ip = getClientIp(socket);
+    const entry = joinFailuresByIp.get(ip);
+    const now = Date.now();
+    if (!entry) return;
+
+    if (entry.lockoutExpiresAt > now) {
+      const error = new Error(JOIN_RATE_LIMIT_MESSAGE);
+      error.code = 'RATE_LIMITED';
+      error.retryAfter = Math.ceil((entry.lockoutExpiresAt - now) / 1000);
+      throw error;
+    }
+
+    if (entry.lockoutExpiresAt > 0) {
+      // The lockout lasts as long as the failed attempts' rolling window, so a
+      // new request after expiry starts with a clean window.
+      joinFailuresByIp.delete(ip);
+    }
+  }
+
+  function recordFailedJoin(socket) {
+    const ip = getClientIp(socket);
+    const now = Date.now();
+    const existing = joinFailuresByIp.get(ip);
+    const entry = existing || { failedAttempts: [], lockoutExpiresAt: 0, lastAttemptAt: now };
+    entry.failedAttempts = entry.failedAttempts.filter((attemptAt) => (
+      attemptAt > now - JOIN_FAILURE_WINDOW_MS
+    ));
+    entry.failedAttempts.push(now);
+    entry.lastAttemptAt = now;
+    if (entry.failedAttempts.length >= JOIN_FAILURE_LIMIT) {
+      entry.lockoutExpiresAt = now + JOIN_LOCKOUT_MS;
+    }
+    joinFailuresByIp.set(ip, entry);
   }
 
   function syncRoom(room) {
@@ -818,6 +877,16 @@ function createRelayServer(options = {}) {
         if (typeof acknowledge === 'function') acknowledge({ ok: true, ...result });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'The action could not be completed.';
+        if (error?.code === 'RATE_LIMITED') {
+          const rateLimitError = {
+            code: 'RATE_LIMITED',
+            message,
+            retryAfter: error.retryAfter,
+          };
+          socket.emit('room:error', rateLimitError);
+          if (typeof acknowledge === 'function') acknowledge({ ok: false, ...rateLimitError });
+          return;
+        }
         socket.emit('room:error', { event: eventName, message });
         if (typeof acknowledge === 'function') acknowledge({ ok: false, message });
       }
@@ -878,12 +947,22 @@ function createRelayServer(options = {}) {
       return { ...session };
     });
 
-    handle(socket, 'room:join', (payload) => {
+    const joinRoom = (payload) => {
+      assertJoinAllowed(socket);
       if (!isPlainObject(payload)) throw new Error('Room join details must be an object.');
       if (socket.data.roomId || socket.data.pendingRoomId) throw new Error('This connection is already in a room or airlock queue.');
-      const roomId = normalizeRoomCode(payload.roomId);
+      let roomId;
+      try {
+        roomId = normalizeRoomCode(payload.roomId);
+      } catch (error) {
+        recordFailedJoin(socket);
+        throw error;
+      }
       const room = rooms.get(roomId);
-      if (!room) throw new Error('That room does not exist.');
+      if (!room) {
+        recordFailedJoin(socket);
+        throw new Error('That room does not exist.');
+      }
       if (room.phase !== 'LOBBY') throw new Error('This game has already started.');
       if (Object.keys(room.players).length >= room.settings.maxPlayers) throw new Error('That room is full.');
 
@@ -934,7 +1013,10 @@ function createRelayServer(options = {}) {
       room.players[player.id] = player;
       const session = attachSocketToPlayer(socket, room, player);
       return { ...session };
-    });
+    };
+
+    handle(socket, 'room:join', joinRoom);
+    handle(socket, 'room:join_pending', joinRoom);
 
     handle(socket, 'room:reconnect', (payload) => {
       if (!isPlainObject(payload)) throw new Error('Reconnect details must be an object.');
@@ -1297,6 +1379,7 @@ function createRelayServer(options = {}) {
   }
 
   function close() {
+    clearInterval(joinFailureCleanupInterval);
     const clearAllRoomTimers = () => {
       for (const room of rooms.values()) {
         clearPhaseTimers(room);

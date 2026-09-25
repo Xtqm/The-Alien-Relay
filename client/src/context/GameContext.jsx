@@ -57,7 +57,8 @@ function emitWithAck(socket, eventName, payload = {}) {
       }
       if (!response?.ok) {
         const error = new Error(response?.message || 'The action could not be completed.');
-        error.code = 'SERVER_REJECTED';
+        error.code = response?.code || 'SERVER_REJECTED';
+        if (Number.isFinite(response?.retryAfter)) error.retryAfter = response.retryAfter;
         reject(error);
         return;
       }
@@ -77,11 +78,20 @@ export function GameProvider({ children }) {
   const [announcements, setAnnouncements] = useState([]);
   const [announcementLog, setAnnouncementLog] = useState([]);
   const [error, setError] = useState('');
+  const [joinCooldownSeconds, setJoinCooldownSeconds] = useState(0);
   const socketRef = useRef(null);
   const connectingRef = useRef(false);
   const previousPhaseRef = useRef(null);
   const rejectedDisconnectRef = useRef(false);
   const pendingAdmissionRef = useRef(false);
+
+  useEffect(() => {
+    if (joinCooldownSeconds <= 0) return undefined;
+    const countdown = window.setTimeout(() => {
+      setJoinCooldownSeconds((remaining) => Math.max(0, remaining - 1));
+    }, 1000);
+    return () => window.clearTimeout(countdown);
+  }, [joinCooldownSeconds]);
 
   useEffect(() => {
     const socket = io(SERVER_URL, {
@@ -176,6 +186,11 @@ export function GameProvider({ children }) {
       }, 8000);
     };
     const onRoomError = (payload) => {
+      if (payload?.code === 'RATE_LIMITED') {
+        const retryAfter = Math.max(1, Math.ceil(Number(payload.retryAfter) || 0));
+        setJoinCooldownSeconds((remaining) => Math.max(remaining, retryAfter));
+        return;
+      }
       if (payload?.message) setError(payload.message);
     };
     const onConnect = async () => {
@@ -269,7 +284,12 @@ export function GameProvider({ children }) {
     try {
       return await emitWithAck(socketRef.current, eventName, payload);
     } catch (actionError) {
-      setError(actionError.message);
+      if (actionError.code === 'RATE_LIMITED') {
+        const retryAfter = Math.max(1, Math.ceil(Number(actionError.retryAfter) || 0));
+        setJoinCooldownSeconds((remaining) => Math.max(remaining, retryAfter));
+      } else {
+        setError(actionError.message);
+      }
       throw actionError;
     }
   }, []);
@@ -379,6 +399,7 @@ export function GameProvider({ children }) {
     announcements,
     announcementLog,
     error,
+    joinCooldownSeconds,
     createRoom,
     joinRoom,
     leaveRoom,
@@ -396,7 +417,7 @@ export function GameProvider({ children }) {
     dismissError,
     dismissRejection,
     dismissKicked,
-  }), [gameState, isPendingAdmission, pendingAdmissionInfo, pendingApplicants, rejectionNotice, kickedReason, connectionStatus, announcements, announcementLog, error, createRoom, joinRoom, leaveRoom, startGame, resetGame, transferHost, toggleWaitingRoom, admitApplicant, rejectApplicant, kickPlayer, cancelPendingAdmission, updateRoomSettings, infectPlayer, castVote, dismissError, dismissRejection, dismissKicked]);
+  }), [gameState, isPendingAdmission, pendingAdmissionInfo, pendingApplicants, rejectionNotice, kickedReason, connectionStatus, announcements, announcementLog, error, joinCooldownSeconds, createRoom, joinRoom, leaveRoom, startGame, resetGame, transferHost, toggleWaitingRoom, admitApplicant, rejectApplicant, kickPlayer, cancelPendingAdmission, updateRoomSettings, infectPlayer, castVote, dismissError, dismissRejection, dismissKicked]);
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;
 }

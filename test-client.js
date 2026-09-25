@@ -22,7 +22,10 @@ function emitWithAck(socket, eventName, payload = {}) {
   return new Promise((resolve, reject) => {
     socket.emit(eventName, payload, (response) => {
       if (!response || response.ok !== true) {
-        reject(new Error(response && response.message ? response.message : `${eventName} failed.`));
+        const error = new Error(response && response.message ? response.message : `${eventName} failed.`);
+        error.code = response?.code || 'SERVER_REJECTED';
+        if (Number.isFinite(response?.retryAfter)) error.retryAfter = response.retryAfter;
+        reject(error);
         return;
       }
       resolve(response);
@@ -80,6 +83,7 @@ function wireClient(client) {
   socket.on('room:rejected', (info) => { client.rejection = info; });
   socket.on('room:kicked', (info) => { client.kickedReason = info?.message || ''; });
   socket.on('room:pending_list_sync', (applicants) => { client.pendingApplicants = applicants; });
+  socket.on('room:error', (error) => { client.roomErrors.push(error); });
   socket.on('game:state_sync', (state) => {
     latestStates.set(client.name, state);
     logState(client, state);
@@ -99,6 +103,7 @@ async function createTestClient(serverUrl, name) {
     rejection: null,
     kickedReason: '',
     pendingApplicants: [],
+    roomErrors: [],
   };
   wireClient(client);
   await new Promise((resolve, reject) => {
@@ -388,6 +393,46 @@ async function verifyLobbyHostTransfer(serverUrl, server) {
   );
 
   for (const client of [commander, candidate, observer]) await emitWithAck(client.socket, 'room:leave');
+}
+
+async function verifyJoinRateLimit(serverUrl, server) {
+  const client = await createTestClient(serverUrl, 'RateLimitProbe');
+  auxiliaryClients.push(client);
+  const missingRoomCodes = [];
+  for (let index = 0; missingRoomCodes.length < 5; index += 1) {
+    const roomCode = `Q${index.toString(36).toUpperCase().padStart(3, '0')}`;
+    if (!server.rooms.has(roomCode)) missingRoomCodes.push(roomCode);
+  }
+
+  for (const [index, roomId] of missingRoomCodes.entries()) {
+    const eventName = index % 2 === 0 ? 'room:join' : 'room:join_pending';
+    await assert.rejects(
+      emitWithAck(client.socket, eventName, { roomId, playerName: client.name }),
+      /That room does not exist\./,
+      `missing room attempt ${index + 1} should be rejected as a normal join failure`,
+    );
+  }
+
+  let rateLimitError;
+  try {
+    await emitWithAck(client.socket, 'room:join', {
+      roomId: 'Q999',
+      playerName: client.name,
+    });
+    assert.fail('the sixth failed room lookup should be rate limited');
+  } catch (error) {
+    rateLimitError = error;
+  }
+
+  assert.equal(rateLimitError?.code, 'RATE_LIMITED');
+  assert.ok(Number.isInteger(rateLimitError?.retryAfter) && rateLimitError.retryAfter > 0);
+  await waitForCondition(
+    () => client.roomErrors.some((error) => error.code === 'RATE_LIMITED'),
+    'the locked-out join did not emit a RATE_LIMITED room:error payload',
+  );
+  const emittedError = client.roomErrors.find((error) => error.code === 'RATE_LIMITED');
+  assert.equal(emittedError.message, 'Too many failed join attempts. System locked.');
+  assert.ok(Number.isInteger(emittedError.retryAfter) && emittedError.retryAfter > 0);
 }
 
 async function run() {
@@ -770,8 +815,9 @@ async function run() {
     await verifyVoluntaryLeaves(serverUrl, server);
     await verifyLobbyHostTransfer(serverUrl, server);
     await verifyHostKicks(serverUrl, server);
+    await verifyJoinRateLimit(serverUrl, server);
 
-    console.log('Simulation passed: airlock admission, lobby and post-game commander transfer, transfer security, connected-player validation, 2v2 parity, assimilation and exile victories, voluntary leave, host migration, lobby and active kicks, kick-session invalidation, relay-tip severance, reconnect grace, rematch authority, and the multiplayer cycle were verified.');
+    console.log('Simulation passed: airlock admission, IP-based join rate limiting, lobby and post-game commander transfer, transfer security, connected-player validation, 2v2 parity, assimilation and exile victories, voluntary leave, host migration, lobby and active kicks, kick-session invalidation, relay-tip severance, reconnect grace, rematch authority, and the multiplayer cycle were verified.');
   } finally {
     for (const client of clients) client.socket.disconnect();
     for (const client of auxiliaryClients) client.socket.disconnect();
