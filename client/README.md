@@ -1,4 +1,4 @@
-# The Relay client
+# The Alien Relay client
 
 The Vite/React client connects to the authoritative Socket.IO server. By default it expects that server at `http://localhost:3000`. The client build requires Node.js 20.19+ (or 22.12+); the backend's existing Node.js requirement remains unchanged.
 

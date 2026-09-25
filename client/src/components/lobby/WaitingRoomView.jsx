@@ -23,7 +23,7 @@ export default function WaitingRoomView({ connectionStatus, admissionInfo }) {
     <main className="mx-auto flex min-h-[calc(100dvh-78px)] max-w-3xl items-center justify-center px-4 py-12 sm:px-7">
       <section className="airlock-panel panel-grid w-full overflow-hidden rounded-lg border border-cyan-100/15 bg-panel/85 shadow-[0_0_70px_rgba(34,211,238,0.055)]">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] px-5 py-4 sm:px-7">
-          <div className="flex items-center gap-2.5 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan-100/70"><Radio size={14} /> THE RELAY // SECURE AIRLOCK</div>
+          <div className="flex items-center gap-2.5 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan-100/70"><Radio size={14} /> THE ALIEN RELAY // SECURE AIRLOCK</div>
           <span className={`flex items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.1em] ${online ? 'text-signal/70' : 'text-amber-100/70'}`}>{online ? <Signal size={12} /> : <SignalZero size={12} />}{online ? 'UPLINK STABLE' : 'RELINKING SIGNAL'}</span>
         </header>
 

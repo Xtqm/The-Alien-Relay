@@ -2,7 +2,7 @@
   "name": "the-relay-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Authoritative Socket.IO backend for The Relay multiplayer game",
+  "description": "The Alien Relay - Real-time multiplayer asymmetric social deduction game",
   "main": "server.js",
   "scripts": {
     "start": "node -e \"process.env.NODE_ENV='production';require('./server.js').startRelayServer()\"",

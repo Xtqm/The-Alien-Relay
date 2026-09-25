@@ -32,8 +32,9 @@ export default function LandingView({ connectionStatus }) {
           DEEP SPACE RESEARCH // LINK ESTABLISHED
         </div>
         <h1 className="max-w-2xl font-display text-[clamp(3rem,9vw,6.7rem)] font-medium uppercase leading-[0.87] tracking-[-0.055em] text-slate-100">
-          Something<br /><span className="text-signal">came back</span><br />with us.
+          The Alien<br /><span className="text-signal">Relay</span>
         </h1>
+        <p className="mt-5 font-mono text-[9px] uppercase tracking-[0.13em] text-signal/70 sm:text-[10px]">Asymmetric Alien Transmission // Social Deduction</p>
         <p className="mt-7 max-w-md text-sm leading-7 text-slate-400 sm:text-base">
           Europa Relay Station 09 is isolated. One of the crew has changed. Keep the habitat alive long enough to find out who.
         </p>

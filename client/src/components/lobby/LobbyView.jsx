@@ -137,7 +137,7 @@ export default function LobbyView({ gameState }) {
             </div>
           )}
         </div>
-        <p className="mt-5 font-mono text-[9px] leading-relaxed tracking-[0.08em] text-slate-600">A MINIMUM OF {minPlayers} CONNECTED PERSONNEL IS REQUIRED TO INITIATE THE RELAY.</p>
+        <p className="mt-5 font-mono text-[9px] leading-relaxed tracking-[0.08em] text-slate-600">A MINIMUM OF {minPlayers} CONNECTED PERSONNEL IS REQUIRED TO BEGIN THE ALIEN RELAY.</p>
       </section>
 
       <aside className="flex flex-col gap-4">

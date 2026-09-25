@@ -63,13 +63,13 @@ export default function Header({ gameState, connectionStatus }) {
     <>
     <header className="relative z-10 border-b border-white/[0.07] bg-[#090c11]/85 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
       <div className="mx-auto flex min-h-[76px] max-w-7xl flex-wrap items-center justify-between gap-x-2 gap-y-2 px-4 py-2 sm:flex-nowrap sm:gap-4 sm:py-3 sm:px-7 lg:px-10">
-        <a href="#" aria-label="The Relay home" className="flex min-w-0 shrink items-center gap-2 sm:gap-3">
+        <a href="#" aria-label="The Alien Relay home" className="flex min-w-0 shrink items-center gap-2 sm:gap-3">
           <span className="relative flex h-10 w-10 items-center justify-center rounded border border-signal/25 bg-signal/[0.07] text-signal shadow-signal">
             <Radio size={19} strokeWidth={1.6} />
             <span className="absolute -right-1 -top-1 h-2 w-2 animate-slow-pulse rounded-full bg-signal" />
           </span>
           <span className="min-w-0">
-            <span className="block font-display text-sm font-bold uppercase tracking-[0.25em] text-slate-100">The Relay</span>
+            <span className="block font-display text-sm font-bold uppercase tracking-[0.18em] text-slate-100 sm:tracking-[0.25em]">The Alien Relay</span>
             <span className="mt-0.5 hidden font-mono text-[9px] uppercase tracking-[0.22em] text-slate-500 sm:block">Outpost 09 · Europa</span>
           </span>
         </a>

@@ -1404,9 +1404,9 @@ function startRelayServer() {
   const relayServer = createRelayServer();
   relayServer.listen().then((address) => {
     const port = typeof address === 'object' && address ? address.port : process.env.PORT || 3000;
-    console.log(`The Relay server is listening on port ${port}.`);
+    console.log(`The Alien Relay server is listening on port ${port}.`);
   }).catch((error) => {
-    console.error('The Relay server could not start:', error);
+    console.error('The Alien Relay server could not start:', error);
     process.exitCode = 1;
   });
 
